@@ -398,6 +398,43 @@ contract UpgradeFromReleaseTest is TournamentsBase {
         assertEq(newState, oldState, "the new code leaves another state after the same play");
     }
 
+    /// @dev Many casts by three players in three waters, with waits of odd lengths in between, so that energy
+    ///      comes back by parts of a period, weekly boards fill up and overflow, and weeks roll over.
+    function _fishOn(uint256 rounds) internal returns (bytes32 events, bytes32 state) {
+        vm.recordLogs();
+        address[3] memory who = [alice, bob, carol];
+        uint8[3] memory where = [0, 5, 0];
+        uint256[] memory one = new uint256[](1);
+        vm.prank(alice);
+        game.equipRod(0); // her bought rod would wear out long before the end
+        for (uint256 i; i < rounds; i++) {
+            vm.warp(vm.getBlockTimestamp() + 7 minutes + (i * 613) % 3 hours);
+            for (uint256 k; k < who.length; k++) {
+                if (game.currentEnergy(who[k]) < 2) continue;
+                one[0] = _fishOnce(who[k], where[k], keccak256(abi.encode("on", i, k)));
+                if (one[0] != 0 && i % 4 == 0) {
+                    vm.prank(who[k]);
+                    game.sellFish(one);
+                }
+            }
+            state = keccak256(abi.encode(state, game.currentEnergy(alice), game.currentEnergy(bob), game.currentEnergy(carol)));
+        }
+        events = keccak256(abi.encode(vm.getRecordedLogs()));
+        state = keccak256(abi.encode(state, _gameState(), _fishState()));
+    }
+
+    function test_aLongStretchOfFishingIsTheSameOnTheNewCode() public {
+        uint256 before = vm.snapshotState();
+        (bytes32 oldEvents, bytes32 oldState) = _fishOn(150);
+        assertTrue(vm.revertToState(before));
+
+        _upgrade();
+        (bytes32 newEvents, bytes32 newState) = _fishOn(150);
+
+        assertEq(newEvents, oldEvents, "the new code emits other events for the same fishing");
+        assertEq(newState, oldState, "the new code leaves another state after the same fishing");
+    }
+
     function test_aCastInTheWaterIsLandedByTheNewCode() public {
         uint64 target = game.castOf(erin).targetBlock;
         _upgrade();

@@ -254,10 +254,6 @@ contract FishingGame is Ownable {
     }
 
     function setConfig(Config calldata c) external onlyOwner {
-        _setConfig(c);
-    }
-
-    function _setConfig(Config memory c) internal {
         if (
             c.maxEnergy == 0 || c.energyRegenSeconds == 0 || c.revealDelay == 0 || c.maxBiteBps > 10_000
                 || c.baseBiteBps > c.maxBiteBps || c.refillPriceGrowthBps < 10_000
@@ -422,35 +418,27 @@ contract FishingGame is Ownable {
         emit EnergyRefilled(msg.sender, cost);
     }
 
-    function currentEnergy(address player) public view returns (uint256) {
-        Player storage p = players[player];
-        if (p.energyUpdatedAt == 0) return config.maxEnergy;
-        if (p.energy >= config.maxEnergy) return p.energy;
-        uint256 e = p.energy + (block.timestamp - p.energyUpdatedAt) / config.energyRegenSeconds;
-        return e > config.maxEnergy ? config.maxEnergy : e;
+    function currentEnergy(address player) public view returns (uint256 e) {
+        (e,) = _energy(players[player]);
+    }
+
+    /// @dev Energy now and the moment it counts from: regeneration is credited in whole points, the rest of the
+    ///      period is kept.
+    function _energy(Player storage p) internal view returns (uint256 e, uint256 at) {
+        uint256 maxE = config.maxEnergy;
+        (e, at) = (p.energy, p.energyUpdatedAt);
+        if (at == 0) return (maxE, block.timestamp);
+        if (e >= maxE) return (e, block.timestamp);
+        uint256 period = config.energyRegenSeconds;
+        uint256 gained = (block.timestamp - at) / period;
+        e += gained;
+        if (e >= maxE) return (maxE, block.timestamp);
+        at += gained * period;
     }
 
     function _syncEnergy(Player storage p) internal {
-        uint32 maxE = config.maxEnergy;
-        if (p.energyUpdatedAt == 0) {
-            p.energy = maxE;
-            p.energyUpdatedAt = uint40(block.timestamp);
-            return;
-        }
-        if (p.energy >= maxE) {
-            p.energyUpdatedAt = uint40(block.timestamp);
-            return;
-        }
-        uint256 gained = (block.timestamp - p.energyUpdatedAt) / config.energyRegenSeconds;
-        if (gained == 0) return;
-        uint256 e = p.energy + gained;
-        if (e >= maxE) {
-            p.energy = maxE;
-            p.energyUpdatedAt = uint40(block.timestamp);
-        } else {
-            p.energy = uint32(e);
-            p.energyUpdatedAt += uint40(gained * config.energyRegenSeconds); // keep partial progress
-        }
+        (uint256 e, uint256 at) = _energy(p);
+        (p.energy, p.energyUpdatedAt) = (uint32(e), uint40(at));
     }
 
     // ------------------------------------------------------------------ progression
@@ -698,21 +686,21 @@ contract FishingGame is Ownable {
         int256 rodCatch,
         uint256 seed
     ) internal {
-        FishNFT.Species memory s = fishNft.species(speciesId);
-        uint32 weight = CatchMath.rollWeight(s.minWeight, s.maxWeight, weightBonus, seed >> 128);
-        uint8 quality = CatchMath.rollQuality(rodCatch, s.rarity, (seed >> 200) % 10_000, config.qualityPerCatch, config.qualityPerRarity);
-        uint16 score = uint16(CatchMath.score(s.rarity, s.minWeight, s.maxWeight, weight, quality));
+        (uint256 rarity, uint256 minW, uint256 maxW,) = _species(speciesId);
+        uint32 weight = CatchMath.rollWeight(uint32(minW), uint32(maxW), weightBonus, seed >> 128);
+        uint8 quality = CatchMath.rollQuality(rodCatch, rarity, (seed >> 200) % 10_000, config.qualityPerCatch, config.qualityPerRarity);
+        uint16 score = uint16(CatchMath.score(rarity, minW, maxW, weight, quality));
 
         uint256 fishId = fishNft.mint(
             player, FishNFT.Fish(speciesId, weight, locationId, quality, uint40(block.timestamp), player)
         );
 
         p.catches += 1;
-        p.xp += _xpFor(s.rarity);
+        p.xp += _xpFor(rarity);
         DexEntry storage d = dex[player][speciesId];
         if (d.count == 0) {
             p.dexCount += 1;
-            if (s.rarity >= 4) p.legends += 1;
+            if (rarity >= 4) p.legends += 1;
         }
         d.count += 1;
         if (weight > d.best) d.best = weight;
@@ -737,7 +725,7 @@ contract FishingGame is Ownable {
         uint256 total;
         for (uint256 i; i < n; i++) {
             uint16 id = pool.speciesIds[i];
-            uint256 rarity = fishNft.species(id).rarity;
+            (uint256 rarity,,,) = _species(id);
             eff[i] = uint256(pool.weights[i]) * (100 + rarity * rarityBonus) * (hiddenSpecies[id] ? hiddenMult : 1);
             total += eff[i];
         }
@@ -747,6 +735,32 @@ contract FishingGame is Ownable {
             x -= eff[i];
         }
         return pool.speciesIds[n - 1]; // unreachable
+    }
+
+    /// @dev A read of the fish contract whose answer is at least `size` bytes. A failed read fails with the fish
+    ///      contract's own error, as a plain call would.
+    function _read(bytes memory call, uint256 size) internal view returns (bytes memory ret) {
+        bool ok;
+        (ok, ret) = address(fishNft).staticcall(call);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(ret, 32), mload(ret))
+            }
+        }
+        if (ret.length < size) revert BadConfig();
+    }
+
+    /// @dev The numbers of a species the game needs. FishNFT.species returns the whole struct, name included;
+    ///      decoding the name on every roll costs gas and code, so the words are read where the ABI puts them:
+    ///      [offset of the struct][offset of name][rarity][minWeight][maxWeight][basePrice][color].
+    function _species(uint256 id) internal view returns (uint256 rarity, uint256 minW, uint256 maxW, uint256 price) {
+        bytes memory ret = _read(abi.encodeCall(FishNFT.species, (id)), 224);
+        assembly ("memory-safe") {
+            rarity := mload(add(ret, 96))
+            minW := mload(add(ret, 128))
+            maxW := mload(add(ret, 160))
+            price := mload(add(ret, 192))
+        }
     }
 
     function _xpFor(uint256 rarity) internal pure returns (uint64) {
@@ -766,21 +780,19 @@ contract FishingGame is Ownable {
         uint256 n = list.length;
         uint32 total = weekTotal[week][player];
         if (n == 0) _weekPlayers[week].push(player);
+        uint256 i = n;
         if (n < WEEK_SLOTS) {
-            list.push(e);
-            n += 1;
+            list.push();
             total += e.score;
         } else if (e.score > list[n - 1].score) {
             total = total - list[n - 1].score + e.score;
-            list[n - 1] = e;
+            i = n - 1;
         } else {
             return;
         }
-        for (uint256 i = n - 1; i > 0 && list[i].score > list[i - 1].score; i--) {
-            WeekEntry memory lower = list[i - 1];
-            list[i - 1] = list[i];
-            list[i] = lower;
-        }
+        // shift the lower scores down and put the catch in its place: best first, the earlier of two equals above
+        for (; i > 0 && e.score > list[i - 1].score; i--) list[i] = list[i - 1];
+        list[i] = e;
         weekTotal[week][player] = total;
         emit WeekScore(week, player, total);
     }
@@ -800,17 +812,34 @@ contract FishingGame is Ownable {
     // ------------------------------------------------------------------ selling fish to the game
 
     /// @notice price = basePrice × weight factor (0.4–3 of the species mean) × quality factor.
-    function fishValue(uint256 fishId) public view returns (uint256) {
-        FishNFT.Fish memory f = fishNft.fish(fishId);
-        FishNFT.Species memory s = fishNft.species(f.speciesId);
-        return (uint256(s.basePrice) * CatchMath.clamp(CatchMath.weightRatioBps(s.minWeight, s.maxWeight, f.weight), 4_000, 30_000) * CatchMath.qualityBps(f.quality)) / 1e8;
+    function fishValue(uint256 fishId) public view returns (uint256 v) {
+        (v,,) = _fishValue(fishId);
+    }
+
+    /// @dev The value of a fish, who landed it and when. FishNFT.fish is six words:
+    ///      [speciesId][weight][spotId][quality][caughtAt][angler]; it reverts for a fish that does not exist.
+    function _fishValue(uint256 fishId) internal view returns (uint256 v, address angler, uint256 caughtAt) {
+        bytes memory ret = _read(abi.encodeCall(FishNFT.fish, (fishId)), 192);
+        uint256 speciesId;
+        uint256 weight;
+        uint256 quality;
+        assembly ("memory-safe") {
+            speciesId := mload(add(ret, 32))
+            weight := mload(add(ret, 64))
+            quality := mload(add(ret, 128))
+            caughtAt := mload(add(ret, 160))
+            angler := mload(add(ret, 192))
+        }
+        (, uint256 minW, uint256 maxW, uint256 price) = _species(speciesId);
+        v = (price * CatchMath.clamp(CatchMath.weightRatioBps(minW, maxW, weight), 4_000, 30_000) * CatchMath.qualityBps(quality)) / 1e8;
     }
 
     /// @dev A fish sold by the angler who landed it, within FRESH_WINDOW of the catch, pays FRESH_BONUS_BPS more.
     function _saleValue(uint256 fishId, address seller) internal view returns (uint256 v) {
-        FishNFT.Fish memory f = fishNft.fish(fishId);
-        v = fishValue(fishId);
-        if (f.angler == seller && block.timestamp <= uint256(f.caughtAt) + FRESH_WINDOW) {
+        address angler;
+        uint256 caughtAt;
+        (v, angler, caughtAt) = _fishValue(fishId);
+        if (angler == seller && block.timestamp <= caughtAt + FRESH_WINDOW) {
             v = (v * (10_000 + FRESH_BONUS_BPS)) / 10_000;
         }
     }

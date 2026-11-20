@@ -175,42 +175,119 @@ forward only. Minted and burned PEARL and fish, and paid BLEND, are never rolled
 
 ## Contract size
 
-`FishingGame` is 24,336 bytes: 240 under the limit. **Fluent enforces EIP-170.** Checked on Fluent Testnet by
-simulating a contract creation (`eth_estimateGas`, no transaction): a runtime of 24,576 bytes is accepted, 24,577
-is refused with `CreateContractSizeLimit`.
+**Fluent enforces EIP-170.** Checked on Fluent Testnet by simulating a contract creation (`eth_estimateGas`, no
+transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `CreateContractSizeLimit`.
 
-Measured on the current source (each in a throwaway checkout, nothing of it is in the repository):
-
-| Change | `FishingGame` size | Free |
+| `FishingGame` runtime bytecode | Bytes | Free |
 |---|---|---|
-| as it is (`optimizer_runs = 100`, `via_ir`) | 24,336 | 240 |
-| `optimizer_runs = 1` | 24,246 | 330 |
-| `optimizer_runs = 1000` | 26,078 | over by 1,502 |
-| no metadata trailer | 24,282 | 294 |
-| `CatchMath` as a linked (external) library | 24,634 | over by 58 |
-| without the content setters (`addRod` … `setHidden`; `setPrice` and `setConfig` kept) | 20,944 | 3,632 |
-| without the shop, repair, refill and claim | 21,402 | 3,174 |
-| without the struct-returning views | 21,646 | 2,930 |
-| paid location unlocks added (`buyLocation`, `setLocationOffer`, one mapping) | 25,173 | over by 597 |
+| release 001, as deployed on Fluent Testnet | 24,336 | 240 |
+| current source, after the optimizations below (not deployed) | 23,340 | 1,236 |
 
-So the next feature does not fit, and build settings alone do not make it fit.
+### What was optimized
 
-| | 1. Reduce the contract | 2. Libraries or narrow modules | 3. Delegatecall extension |
-|---|---|---|---|
-| What it is | Build settings; and removing the owner-only content setters, adding content through an upgrade instead | A separate contract per feature that calls the game through a small hook; or linked libraries | The implementation forwards unknown selectors to a second contract that shares its storage |
-| Room gained | 90–150 bytes from settings; 3,392 from the content setters | A module costs the game only its hook (a few hundred bytes); a linked library of small functions costs more than it saves (measured: +298) | 6,418 measured for setup and shop together, for a fallback of under 100 bytes |
-| Security | No new trust | A new privilege per module: a shop must be able to set unlock bits and burn PEARL, and a PEARL minter can mint and burn for anyone | Same trust as the implementation, but two contracts must agree on one storage layout, and a selector present in both is silently served by the first |
-| Gas | Slightly higher with `optimizer_runs = 1` | One more external call on the module's paths | One more delegatecall on the extension's paths; `cast` and `reel` unchanged |
-| Storage | Untouched | The module has its own storage; the game appends at most a module address | Shared; both contracts need the layout check, new state belongs in ERC-7201 namespaces |
-| Upgrades | As now; every new rod, location or species becomes a code upgrade | Modules are deployed and wired separately; more addresses in every release | Two implementations per release; the OpenZeppelin validator reports `delegatecall` and needs a reviewed exception at that one line |
-| Migration risk | None | None for players; a wrongly wired hook can unlock for free | None if the layouts match; a mismatch corrupts state |
+Every external function, event and error is as it was, and so is the storage layout: the released `GameLens`, the
+released `Tournaments` and the web client work with the new code unchanged. Nothing about the rules changed either;
+`test/Upgrade.t.sol` plays the same game on the released bytecode and on this source (the pending cast and fight,
+buying, repairing, a prize, and 150 rounds of fishing by three players with waits of odd lengths) and requires the
+same events and the same state.
 
-**Recommendation.** Do not build the extension now. For paid location unlocks, remove the owner-only content setters
-from `FishingGame` (3,392 bytes, no new mechanism, no new trust) and add content in the `initializer` of an upgrade,
-which the tooling in this file now makes a checked, rehearsed operation. That leaves about 2,800 bytes after the
-feature. Keep `optimizer_runs` as it is: 90 bytes are not worth higher gas for players. Revisit the extension only
-when the player-facing code itself no longer fits; modules are the better choice for features that are optional and
-hold their own state.
+| Change | Bytes saved |
+|---|---|
+| A species is read as the four numbers the game uses, at the words where the ABI puts them, instead of decoding the whole struct with its name on every roll | 448 |
+| Energy: `currentEnergy` and the settlement in `cast` share one function instead of two copies of the same arithmetic | 228 |
+| A fish is read the same way, once per sale instead of twice | 222 |
+| The weekly board shifts lower scores down and writes the catch once, instead of swapping entries through memory | 84 |
+| `setConfig` validates the calldata and stores it, without a copy through memory | 46 |
+
+Each was measured alone against the released source. Together they save 996 bytes: the two readers share a helper
+that passes on the fish contract's own error when a read fails, as a plain call did, and that costs 32.
+
+Gas, from the test suite (`forge test --gas-report`), before → after:
+
+| Call | Average gas |
+|---|---|
+| `reel` | 252,418 → 244,689 (−3.1%) |
+| `sellFish` | 308,456 → 292,406 (−5.2%) |
+| `fishValue` | 21,847 → 20,767 (−4.9%) |
+| `cast` | 68,496 → 68,709 (+0.3%) |
+| `setConfig` (owner) | 64,812 → 66,256 (+2.2%) |
+
+Tried and not taken: `optimizer_runs = 1` saves another 102 bytes and makes every call a little dearer;
+`optimizer_runs = 1000` was 1,502 bytes over the limit before these changes; the legacy pipeline (`via_ir = false`) does not
+compile `FishNFT` ("stack too deep"); `CatchMath` as a linked library makes the game 298 bytes larger, because
+calling a small function costs more code than the function; moving `quoteSell` to the lens saves 69 bytes and would
+break the released lens.
+
+### What 1,236 bytes buy
+
+Paid location unlocks (`buyLocation`, `setLocationOffer`, one mapping) measure 838 bytes on top: 24,178, with 398
+bytes left. So the next feature fits, and nothing after it does. The target of 3 KB needs one of the following.
+All sizes are measured on the current source, each in a throwaway copy; none of it is in the repository.
+
+| | Size | Free | Content setters stay on the game | Delegatecall | Changes the ABI |
+|---|---|---|---|---|---|
+| Now | 23,340 | 1,236 | yes | no | no |
+| A. Lens-only views move to `GameLens` (raw storage reads) | 20,042 | 4,534 | yes | no | read functions |
+| A, keeping `playerOf` and `castOf` | 20,904 | 3,672 | yes | no | read functions |
+| B. Content setters in a linked library | 22,205 | 2,371 | yes | compiler-generated | no |
+| A and B | 18,946 | 5,630 | yes | compiler-generated | read functions |
+| C. Content setters removed | 19,941 | 4,635 | no | no | owner functions |
+| D. Catalog in a contract of its own | not built | | yes, on that contract | no | owner functions |
+| E. Delegatecall extension (setters and shop moved) | 16,882 + a fallback | about 7,600 | yes | hand-written | no |
+
+**A. Views to `GameLens`.** `rodItem`, `lureItem`, `specialInfo`, `achievement`, the weekly views and the public
+getters of the mappings exist only for `GameLens` and the tests; the client reads everything through the lens, and
+`Tournaments` needs only `location`, `loadout`, the counts and `ownsRod`, which stay. They are replaced by one
+`extsload(bytes32[])` that returns raw storage slots, and the lens turns slots into the catalog and a player's
+state. Storage is public on a chain, so this exposes nothing. Adding rods, lures and locations works exactly as
+today. The price: the lens must know the storage layout (slot numbers, packing, mapping keys), so a mistake shows
+wrong data to players without touching their state; the released lens stops working at the upgrade, so a new one
+must ship in the same release; and the tests read through a lens-like helper instead of getters. What makes it
+safe to build: the lens can be tested against the released bytecode, where the getters still exist, field by field.
+
+**B. Linked library for the setters.** `addRod` … `addAchievement` keep their signatures and owner check on the game
+and call a library that validates and writes through typed storage pointers. Adding content works exactly as today.
+It is a delegatecall, but one the compiler generates with typed arguments: no fallback, no selector routing, no
+second contract with its own idea of the layout. The price: bytecode must be linked at deployment and in every
+bytecode comparison (`release.py`, the upgrade script), and OpenZeppelin's validator reports
+`external-library-linking`, which would be a third named exception. Alone it does not reach 3 KB.
+
+**C. Removing the content setters.** New rods, lures, locations, special fish and achievements are appended by the
+initializer of an upgrade; ids continue from the current counts, existing ones are untouched. No new mechanism and
+no new trust, but every content drop becomes a code upgrade with the whole procedure, and later with the timelock.
+
+**D. A catalog contract.** A contract that only owns the game and calls its setters frees nothing: the setters are
+the bytes. To free them, the catalog itself (rods, lures, locations and their setters) has to live in the new
+contract, and the game reads it by external call. Adding content is then a transaction to the catalog contract, no
+game upgrade. The existing entries must be copied there in the same order to keep their ids, the old arrays stay in
+the game's layout as dead storage, every `cast` and `reel` pays for external reads of items and pools, and the game
+must keep `location` and `loadout` as pass-throughs for the released `Tournaments`. It is the option with the most
+moving parts, and two contracts that must agree on ids. Not prototyped, so its size and gas are not measured.
+
+**E. A delegatecall extension.** The implementation forwards unknown selectors to a second contract that runs on
+the proxy's storage. The setters and the shop keep their signatures at the game's address, so adding content works
+exactly as today. It frees the most, and it is the one to justify carefully before building:
+
+- the extension has the implementation's full authority over every player's state, so it belongs to the same
+  release, the same rehearsal and the same snapshot as the implementation, pinned in it as an immutable;
+- both contracts must have the same storage layout: one shared base contract for the variables, the layout check
+  run on both and against each other, new state only in ERC-7201 namespaces;
+- a selector that exists in both is served by the implementation and the extension's version is unreachable,
+  silently: a test has to list the selectors of both and require them to be disjoint;
+- the fallback forwards calls from anyone, so every extension function does its own access control;
+- the extension must be inert when called directly (its own storage is empty), as the bare implementation is;
+- OpenZeppelin's validator reports `delegatecall`; passing it needs a reviewed exception at that one line.
+
+### Recommendation
+
+1. Ship the optimizations above with the next upgrade. They are in the source, change no interface and no rule, and
+   make room for paid location unlocks.
+2. For 3 KB and more with content management kept on the chain: **A**, keeping `playerOf` and `castOf` (3,672 free)
+   or not (4,534 free). It is the only option above 3 KB that adds no delegatecall, no new privilege and no
+   migration. It changes the read interface, so it is a decision to take before it is built.
+3. If more is needed after that, **B** on top (5,630 free), before anything hand-written.
+4. Not now: **D** (most moving parts, gas on every cast) and **E** (only when the player-facing code itself no
+   longer fits). **C** stays the fallback if the read interface must not change.
 
 ## Secrets
 
