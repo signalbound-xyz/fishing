@@ -27,6 +27,7 @@ pnpm install
 pnpm dev          # http://localhost:5180
 pnpm test         # unit tests of the game rules (vitest)
 pnpm sim          # balance simulation, rewrites BALANCE.md
+pnpm sim:audit    # balance audit and experiments, rewrites BALANCE_AUDIT.md
 ```
 
 ## Local game
@@ -49,7 +50,9 @@ buy tackle → rarer fish, new waters.
   nor its bonus. The contracts have no such purchase yet, so on the contracts the offer is not shown.
 - **Weekly cup**: the ten best catches of the week. Weeks roll over Thursday 00:00 UTC, the same as the
   contract's `currentWeek()`. Opponents are generated and labelled DEMO; no rank rewards are paid.
-- Numbers and the reasoning behind them: [BALANCE.md](BALANCE.md).
+- Numbers and the reasoning behind them: [BALANCE.md](BALANCE.md). The audit of the current balance, the
+  experiments with other numbers and the endgame proposal: [BALANCE_REVIEW.md](BALANCE_REVIEW.md), on top of the
+  generated tables in [BALANCE_AUDIT.md](BALANCE_AUDIT.md).
 
 ### Trust
 
@@ -80,6 +83,7 @@ nothing in the browser decides a catch, a balance or an unlock; the only client-
 | `pnpm typecheck` | type check only                                                                               |
 | `pnpm test`      | unit tests of the game rules                                                                  |
 | `pnpm sim`       | balance simulation (100k casts per loadout), writes `BALANCE.md`                              |
+| `pnpm sim:audit` | balance audit and experiments (about two minutes), writes `BALANCE_AUDIT.md` and `sim/out/loadouts.csv` |
 
 After changing the contracts: `forge build` (and redeploy if needed), then `pnpm sync`.
 If `contracts/out` is missing, `sync` keeps the already generated files.
@@ -89,6 +93,42 @@ If `contracts/out` is missing, `sync` keeps the already generated files.
 - `VITE_GAME_MODE` — `local` forces the local game even when a deployment exists.
 - `VITE_CHAIN_ID` — chainId (default `20994`, Fluent Testnet; `25363` is Fluent mainnet); addresses are taken from `deployments/<chainId>.json`.
 - `VITE_RPC_URL` — node RPC (default: the network's public RPC).
+- `VITE_TELEMETRY` — `off` stops the gameplay telemetry from recording (it is on by default and stays in the browser).
+
+## Gameplay telemetry
+
+Balance work needs to know how people actually play, and a bot cannot say. The game records what happens at the
+water and shows it on the **Play stats** page (`#/stats`, linked in the footer), where the log can be exported as
+JSON or cleared.
+
+- **What**: sessions (start, end, active length), casts (location, cost, tackle, energy left), bites and empty
+  hooks, the hook (reaction time, window, missed or clean), every reel fight (landed, line snapped or slack; its
+  length, the share of it in the green, the difficulty, which try it was), catches by rarity and quality, the bar
+  running out of energy, purchases (rod, lure, repair, refill, access to a water, PEARL for BLEND), unlocks,
+  level-ups and sales.
+- **Where**: in this browser's `localStorage` only (`onchain-fishing:telemetry`, the newest 5,000 events). Nothing
+  is sent to any server or third party, and no event holds a wallet address or any account data. Sharing the log is
+  the player's own act: Export, then send the file.
+- **Both modes**: every event is tagged `local` or `chain`, because the hook and the fight are the same in both and
+  the contracts are where players are. The page can show either alone.
+- **Apart from the rules**: nothing in `src/game` knows about it and nothing reads it back. The format and the
+  summary are pure functions in `src/telemetry` (tested); `src/play/telemetry.ts` is the browser side; the UI calls
+  it from `play/ui/pond.ts` and `play/ops.ts`.
+- In the console: `fishingTelemetry.summary()`, `.log()`, `.export()`, `.clear()`.
+
+What the page shows is measured from the person at the keyboard. What `pnpm sim` and `pnpm sim:audit` print is a
+simulation with model players. The two are kept apart on purpose; see BALANCE_REVIEW.md for what to compare.
+
+## Balance lab
+
+`sim/lab.ts` plays whole careers and single sittings with the real rules: three model players (beginner, average,
+experienced), either rule set (the contracts, where a lost fight is a retry, or the local game, where it is a lost
+fish), a play pattern (from every other day to a check-in every four hours with refills) and a start (a new
+player or one who owns everything). `sim/scenarios.ts` holds what the audit runs: alternative energy rules (cast
+prices, bar size, refill price, payouts), reel difficulty curves, cups and mastery tiers. Edit it and run
+`pnpm sim:audit`; nothing there changes the game or the contracts. `sim/lab.test.ts` (part of `pnpm test`) checks
+the lab's bookkeeping against the rules: PEARL is conserved, energy never exceeds what the clock and the refills
+give, the contract's quality roll is reproduced exactly.
 
 ## Structure
 
@@ -111,8 +151,13 @@ src/play/              the local game's shell
   chain.ts             contract backend: reads via GameLens, transactions, catalog check
   state.ts             the current Save (localStorage in local mode, a view of chain state otherwise)
   fishSprite.ts        pixel fish drawn from shape parameters
-  ui/*.ts              pond, keepnet, collection, trophies, ranks, header, prize (the bottle reveal)
-sim/balance.sim.ts     balance simulation
+  telemetry.ts         gameplay telemetry in the browser: the recorder over localStorage, what the UI reports
+  ui/*.ts              pond, keepnet, collection, trophies, ranks, header, prize (the bottle reveal), stats
+src/telemetry/         telemetry format, recorder and summary: pure, no DOM
+sim/balance.sim.ts     balance simulation (BALANCE.md)
+sim/lab.ts             the balance lab: model players, rule sets, careers day by day
+sim/scenarios.ts       what the audit tries: energy rules, reel curves, cups, mastery tiers
+sim/audit.sim.ts       the audit (BALANCE_AUDIT.md, sim/out/loadouts.csv)
 src/tx.ts, errors.ts   simulate → send through Fluent Connect → receipt, readable revert messages
 src/scene.ts           canvas water animation (both modes)
 src/fluent.tsx         Fluent Connect widget (React island)

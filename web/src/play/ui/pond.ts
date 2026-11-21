@@ -53,6 +53,7 @@ import { fishArt } from '../fishSprite';
 import { blocksUntilExpiry, outcomeOf, previewCast, tx, waitPastBlock, world } from '../chain';
 import { CHAIN, ops, refresh, refreshStandings } from '../ops';
 import { act, commit, getSave, rev } from '../state';
+import { track, trackCast, trackLanding } from '../telemetry';
 import { pearl, qualityTag, rarityTag } from './fmt';
 import { showPrizeReveal } from './prize';
 
@@ -172,6 +173,15 @@ let biteAt = 0;
 let attempt = 0;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const round = (v: number, digits: number): number => Number(v.toFixed(digits));
+/** The cast whose bite the telemetry already has: a cast picked up again after a reload is not counted twice in one visit. */
+let biteTracked: bigint | null = null;
+function trackChainBite(ok: boolean, loc: number): void {
+  const nonce = world.cast?.nonce ?? null;
+  if (nonce !== null && nonce === biteTracked) return;
+  biteTracked = nonce;
+  track({ e: 'bite', ok, loc });
+}
 const hookedRarity = (hk: Hooked) => (hk.prize ? BLEND_PRIZE.fightRarity : SPECIES[hk.speciesId].rarity);
 const difficultyNow = (): Difficulty => difficultyOf(hookedRarity(hooked!), LOCATIONS[ticket!.locationId].tier);
 /** A lure with catch makes fish find it sooner. */
@@ -187,6 +197,7 @@ function doCast(): void {
   );
   if (!r) return;
   ticket = r.ticket;
+  trackCast(r.save, r.ticket.locationId);
   scene.setSpot(ticket.locationId);
   scene.setPhase('casting');
   setPhase('casting');
@@ -199,7 +210,9 @@ function doCast(): void {
 
 function onWaitOver(): void {
   if (!ticket) return;
-  if (!rollBite(ticket, Math.random)) {
+  const bit = rollBite(ticket, Math.random);
+  track({ e: 'bite', ok: bit, loc: ticket.locationId });
+  if (!bit) {
     scene.setPhase('idle');
     finish();
     showMessage('Nothing is biting', 'The float never moved. A lure with catch brings more bites.');
@@ -223,6 +236,7 @@ function beginBite(): void {
 
 function onHookMissed(): void {
   if (phase !== 'bite') return;
+  if (ticket && hooked) track({ e: 'hook', ok: false, reaction: null, window: hookWindow(difficultyNow()), clean: false, d: difficultyNow() });
   if (CHAIN) {
     attempt++;
     scene.setPhase('waiting');
@@ -245,10 +259,11 @@ function doHook(): void {
   const reaction = (performance.now() - biteAt) / 1000;
   const clean = isCleanHook(reaction, d);
   fight = { d, reaction, clean, attempt, accuracy: 0 };
+  track({ e: 'hook', ok: true, reaction: round(reaction, 3), window: hookWindow(d), clean, d });
   scene.setPhase('reeling');
   setPhase('reeling');
   // a retried fish is tired: each try widens the green band and softens its jerks
-  startReel(reelParams(d, ticket.totals.zone, CHAIN ? attempt : 0), clean ? CLEAN_HOOK_HEAD_START : 0);
+  startReel(reelParams(d, ticket.totals.zone, CHAIN ? attempt : 0), clean ? CLEAN_HOOK_HEAD_START : 0, d);
 }
 
 // ------------------------------------------------------------------ the same flow on the contracts
@@ -287,6 +302,7 @@ async function castOnChain(): Promise<void> {
   else if (earlier?.kind === 'bottle') toast(`Your previous cast landed a bottle: +${earlier.amount} BLEND`, 'ok');
   ticket = { locationId, totals: totalsNow };
   await refresh();
+  trackCast(getSave(), locationId);
   if (world.cast) void watchChainCast(world.cast.targetBlock);
   else finish();
 }
@@ -316,6 +332,7 @@ async function watchChainCast(target: bigint): Promise<void> {
   const wait = biteDelay(LOCATIONS[ticket.locationId].tier, quickness(ticket), Math.random) * 1000 - (performance.now() - since);
   if (wait > 0) await sleep(wait);
   if (phase !== 'waiting' || !ticket) return;
+  if (out.kind !== 'expired') trackChainBite(out.kind !== 'missed', ticket.locationId);
   if (out.kind === 'missed' || out.kind === 'expired') {
     deadNonce = world.cast?.nonce ?? null;
     scene.setPhase('idle');
@@ -393,8 +410,10 @@ async function settleOnChain(): Promise<void> {
   scene.setPhase('caught');
   finish();
   phase = 'result';
-  if (out.kind === 'bottle') showPrize(out.amount);
-  else showCatch(landingFrom(out, before), note);
+  if (out.kind === 'bottle') return showPrize(out.amount);
+  const landing = landingFrom(out, before);
+  trackLanding(landing);
+  showCatch(landing, note);
 }
 
 type CaughtOutcome = Extract<NonNullable<ReturnType<typeof outcomeOf>>, { kind: 'caught' }>;
@@ -474,13 +493,15 @@ async function legacyHookOnChain(): Promise<void> {
     reveal = () => showPrize(out.amount);
   } else {
     const landing = landingFrom(out, before);
+    trackLanding(landing);
     hooked = { speciesId: out.speciesId, weight: out.weight, isSpecial: out.special };
     reveal = () => showCatch(landing);
   }
   scene.setPhase('reeling');
   setPhase('reeling');
   fight = null;
-  startReel(reelParams(difficultyOf(hookedRarity(hooked), LOCATIONS[ticket?.locationId ?? before.location].tier), (ticket ?? { totals: currentTotals(before) }).totals.zone), 0);
+  const d = difficultyOf(hookedRarity(hooked), LOCATIONS[ticket?.locationId ?? before.location].tier);
+  startReel(reelParams(d, (ticket ?? { totals: currentTotals(before) }).totals.zone), 0, d);
 }
 
 function finish(): void {
@@ -496,6 +517,8 @@ function finish(): void {
 let holding = false;
 let reel: ReelState | null = null;
 let reelP: ReelParams | null = null;
+/** Difficulty of the fight on screen, for the telemetry. */
+let reelD: Difficulty = 0;
 let promptEl: HTMLElement;
 let needleEl: HTMLElement;
 let gaugeEl: HTMLElement;
@@ -505,8 +528,9 @@ let holdBtn: HTMLButtonElement;
 
 const PULL = ['A light tug', 'A steady pull', 'A strong fish', 'A heavy fish!', 'A monster!', 'Something unreal…'];
 
-function startReel(p: ReelParams, headStart: number): void {
+function startReel(p: ReelParams, headStart: number, d: Difficulty): void {
   reelP = p;
+  reelD = d;
   reel = reelStart(Math.random, headStart);
   promptEl = h('div', { class: 'reel-prompt', attrs: { role: 'status', 'aria-live': 'assertive' } });
   needleEl = h('div', { class: 'gauge-needle' });
@@ -589,6 +613,16 @@ function paintReel(): void {
 
 function endReel(r: ReelState): void {
   if (fight) fight.accuracy = accuracy(r);
+  track({
+    e: 'fight',
+    result: r.result === 'landed' ? 'landed' : r.lost ?? 'slack',
+    seconds: round(r.t, 2),
+    accuracy: round(accuracy(r), 3),
+    d: reelD,
+    green: reelP ? round(reelP.green[1] - reelP.green[0], 3) : 0,
+    attempt: CHAIN ? attempt : 0,
+    replay: reveal !== null,
+  });
   if (CHAIN) {
     if (reveal) {
       // fallback path: the catch was settled before the fight, so the fight was only a replay
@@ -647,6 +681,7 @@ function endReel(r: ReelState): void {
     return;
   }
   commit(landing.save);
+  trackLanding(landing);
   const note = fightNote();
   scene.setPhase('caught');
   finish();

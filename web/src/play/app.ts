@@ -12,6 +12,7 @@ import { initLocalHeader, tickLocalHeader } from './ui/header';
 import { initKeepnet } from './ui/keepnet';
 import { initPond, tickPond } from './ui/pond';
 import { initRanks, tickRanks } from './ui/ranks';
+import { initStats } from './ui/stats';
 import { initTrophies } from './ui/trophies';
 import { catalogMismatches } from './chain';
 import { CHAIN, refresh, refreshStandings } from './ops';
@@ -60,6 +61,7 @@ function selectTab(k: Tab): void {
 
 const tackleEl = h('main', { class: 'tackle hidden' });
 const cupEl = h('main', { class: 'layout cup hidden' });
+const statsEl = h('main', { class: 'playstats hidden' });
 const pondEl = h(
   'main',
   { class: 'layout' },
@@ -72,10 +74,13 @@ app.append(
   pondEl,
   cupEl,
   tackleEl,
+  statsEl,
   h(
     'footer',
     { class: 'footer' },
     CHAIN ? `${chain.name} (${CHAIN_ID}) · game ${deployment?.game} · every catch is decided and stored onchain` : 'Local game · progress is saved in this browser · no contracts or transactions',
+    ' · ',
+    h('a', { text: 'Play stats', title: 'What this browser has recorded about your play. Nothing is sent anywhere.', attrs: { href: '#/stats' } }),
   ),
 );
 selectTab(tab);
@@ -83,10 +88,12 @@ selectTab(tab);
 function route(): void {
   const tackle = location.hash === '#/tackle';
   const cup = location.hash === '#/cup';
-  pondEl.classList.toggle('hidden', tackle || cup);
+  const stats = location.hash === '#/stats';
+  pondEl.classList.toggle('hidden', tackle || cup || stats);
+  statsEl.classList.toggle('hidden', !stats);
   cupEl.classList.toggle('hidden', !cup);
   tackleEl.classList.toggle('hidden', !tackle);
-  document.title = tackle ? 'Tackle · Onchain Fishing' : cup ? 'Cup · Onchain Fishing' : 'Onchain Fishing';
+  document.title = tackle ? 'Tackle · Onchain Fishing' : cup ? 'Cup · Onchain Fishing' : stats ? 'Play stats · Onchain Fishing' : 'Onchain Fishing';
   emit();
 }
 window.addEventListener('hashchange', () => {
@@ -133,6 +140,7 @@ const renders = [
   initRanks(panels.ranks),
   initTackle(tackleEl, true),
   initCup(cupEl),
+  initStats(statsEl),
 ];
 subscribe(() => renders.forEach((r) => r()));
 route();

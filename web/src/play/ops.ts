@@ -5,7 +5,7 @@
  */
 import { LOCAL_GAME } from '../config';
 import * as A from '../game/actions';
-import { SPECIALS } from '../game/content';
+import { LOCATIONS, SPECIALS } from '../game/content';
 import { achievements } from '../game/progress';
 import type { Save } from '../game/types';
 import { emit, state } from '../store';
@@ -13,6 +13,7 @@ import { LURES, RODS } from '../tackle/catalog';
 import { buyPearlOnChain, loadChainSave, loadStandings, rememberLocation, toggleFavouriteLocal, tx, type GameCall } from './chain';
 import { toast } from '../ui/toast';
 import { act, apply, getSave, replaceSave } from './state';
+import { track } from './telemetry';
 
 export const CHAIN = !LOCAL_GAME;
 
@@ -54,41 +55,65 @@ const rodIndex = (id: string): number => RODS.findIndex((r) => r.id === id);
 const lureIndex = (id: string): number => LURES.findIndex((l) => l.id === id);
 const local = (fn: (s: Save) => Save): Promise<boolean> => Promise.resolve(apply(fn));
 
+type Bought = 'rod' | 'lure' | 'repair' | 'refill' | 'location' | 'pearl';
+/** Telemetry: a purchase that went through, at the price shown when it was asked for. */
+const bought = (done: Promise<boolean>, kind: Bought, id: string, price: number): Promise<boolean> =>
+  done.then((ok) => {
+    if (ok) track({ e: 'purchase', kind, id, price });
+    return ok;
+  });
+
 export const ops = {
-  buyRod: (id: string): Promise<boolean> => (CHAIN ? send('Buy rod', { functionName: 'buyRod', args: [rodIndex(id)] }) : local((s) => A.buyRod(s, id))),
+  buyRod: (id: string): Promise<boolean> =>
+    bought(CHAIN ? send('Buy rod', { functionName: 'buyRod', args: [rodIndex(id)] }) : local((s) => A.buyRod(s, id)), 'rod', id, RODS[rodIndex(id)]?.price ?? 0),
 
   /** Buys the lure; an empty lure slot takes it. */
   buyLure: (id: string): Promise<boolean> =>
-    CHAIN ? send('Buy lure', { functionName: 'buyLure', args: [lureIndex(id)] }) : local((s) => (s.lures[id] ? A.buyLure(s, id) : A.equipLure(A.buyLure(s, id), id))),
+    bought(
+      CHAIN ? send('Buy lure', { functionName: 'buyLure', args: [lureIndex(id)] }) : local((s) => (s.lures[id] ? A.buyLure(s, id) : A.equipLure(A.buyLure(s, id), id))),
+      'lure',
+      id,
+      LURES[lureIndex(id)]?.price ?? 0,
+    ),
 
   equipRod: (id: string): Promise<boolean> => (CHAIN ? send('Equip rod', { functionName: 'equipRod', args: [rodIndex(id)] }) : local((s) => A.equipRod(s, id))),
 
   equipLure: (id: string | null): Promise<boolean> =>
     CHAIN ? send(id ? 'Equip lure' : 'Take the lure off', { functionName: 'equipLure', args: [id ? lureIndex(id) + 1 : 0] }) : local((s) => A.equipLure(s, id)),
 
-  repairRod: (id: string): Promise<boolean> => (CHAIN ? send('Repair rod', { functionName: 'repairRod', args: [rodIndex(id)] }) : local((s) => A.repairRod(s, id))),
+  repairRod(id: string): Promise<boolean> {
+    const price = A.rodRepairPrice(getSave(), id);
+    return bought(CHAIN ? send('Repair rod', { functionName: 'repairRod', args: [rodIndex(id)] }) : local((s) => A.repairRod(s, id)), 'repair', id, price);
+  },
 
   /** Buys PEARL for BLEND. `blendAmount` is what the player typed. */
   async buyPearl(blendAmount: string): Promise<boolean> {
-    if (!CHAIN) return apply((s) => A.buyPearl(s, Number(blendAmount.replace(',', '.'))).save);
+    const blend = Number(blendAmount.replace(',', '.'));
+    // for this one purchase the price is the BLEND paid, not PEARL
+    if (!CHAIN) return bought(Promise.resolve(apply((s) => A.buyPearl(s, blend).save)), 'pearl', 'blend', blend);
     if (!state.wallet) {
       toast('Connect with Fluent to play', 'info');
       return false;
     }
     const ok = await buyPearlOnChain(blendAmount);
     if (ok) await refresh();
-    return ok;
+    return bought(Promise.resolve(ok), 'pearl', 'blend', blend);
   },
 
-  refillEnergy: (): Promise<boolean> => (CHAIN ? send('Refill energy', { functionName: 'refillEnergy', args: [] }) : local((s) => A.refillEnergy(s, Date.now()))),
+  refillEnergy(): Promise<boolean> {
+    const price = A.refillPrice(getSave(), Date.now());
+    return bought(CHAIN ? send('Refill energy', { functionName: 'refillEnergy', args: [] }) : local((s) => A.refillEnergy(s, Date.now())), 'refill', 'energy', price);
+  },
 
   /** Resolves to the PEARL earned, or undefined if nothing was sold. */
   async sellFish(ids: string[]): Promise<number | undefined> {
     if (!CHAIN) {
-      return act(
+      const earned = act(
         (s) => A.sellFish(s, ids, Date.now()),
         (r) => r.save,
       )?.earned;
+      if (earned !== undefined) track({ e: 'sale', fish: ids.length, earned });
+      return earned;
     }
     const s = getSave();
     const sold = s.fish.filter((f) => ids.includes(f.id));
@@ -104,7 +129,10 @@ export const ops = {
       throw e;
     }
     const ok = await send(`Sell ${ids.length} fish`, { functionName: 'sellFish', args: [ids.map((id) => BigInt(id))] });
-    return ok ? sold.reduce((a, f) => a + A.saleValue(f, now), 0) : undefined;
+    if (!ok) return undefined;
+    const earned = sold.reduce((a, f) => a + A.saleValue(f, now), 0);
+    track({ e: 'sale', fish: ids.length, earned });
+    return earned;
   },
 
   /** Favourites are a client-side convenience in both modes: they only guard the Sell buttons. */
@@ -142,7 +170,13 @@ export const ops = {
    * chain nothing is sent and nothing changes.
    */
   buyLocation(id: number): Promise<boolean> {
-    if (!CHAIN) return local((s) => A.buyLocation(s, id));
+    if (!CHAIN) {
+      const price = LOCATIONS[id]?.purchase?.price ?? 0;
+      return bought(local((s) => A.buyLocation(s, id)), 'location', String(id), price).then((ok) => {
+        if (ok) track({ e: 'unlock', loc: id, how: 'purchase' });
+        return ok;
+      });
+    }
     toast('Buying access is not available on the contracts yet', 'info');
     return Promise.resolve(false);
   },

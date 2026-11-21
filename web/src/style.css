@@ -2814,3 +2814,62 @@ div.item {
   font: 600 15px/1.2 var(--font-body);
   color: var(--text);
 }
+
+/* ------------------------------------------------------------ play stats (#/stats) */
+.playstats {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ps-card {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ps-card h2,
+.ps-card h3,
+.ps-card p {
+  margin: 0;
+}
+.ps-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.ps-scope {
+  display: flex;
+  gap: 4px;
+  margin-right: auto;
+}
+.ps-scroll {
+  overflow-x: auto;
+}
+.ps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 500 13px/1.4 var(--font-body);
+  font-variant-numeric: tabular-nums;
+}
+.ps-table th,
+.ps-table td {
+  padding: 6px 10px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line-soft);
+}
+.ps-table th {
+  color: var(--dim);
+  font-weight: 600;
+}
+.ps-table th:first-child,
+.ps-table td:first-child {
+  text-align: left;
+}
+.footer a {
+  color: inherit;
+}
