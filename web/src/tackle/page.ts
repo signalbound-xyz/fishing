@@ -96,7 +96,7 @@ function actions(item: TackleItem, shop: boolean): HTMLElement[] {
   if (!shop) return [button('Soon', null, { title: 'Not onchain yet: rod types and lures need a contract update' })];
   const s = getSave();
   const short = s.pearl < item.price;
-  const shortTitle = short ? `You need ${pearl(item.price - s.pearl)} more PEARL` : undefined;
+  const shortTitle = short ? `You need ${pearl(Math.ceil(item.price - s.pearl))} more PEARL` : undefined;
   if (item.kind === 'rod') {
     if (!s.rods[item.id]) return [button(`Buy · ${pearl(item.price)}`, () => ((view.rod = item.id), void ops.buyRod(item.id)), { primary: true, disabled: short, title: shortTitle })];
     const repair = rodRepairPrice(s, item.id);
@@ -232,24 +232,38 @@ function loadoutCard(rod: TackleItem, lure: TackleItem | null, spot: number, sho
 let blendInput = '';
 let buyingPearl = false;
 
-/** "Buy PEARL for BLEND": one way, fixed rate. On the contracts it is the PearlExchange; locally, the bottle's BLEND. */
-function exchangeCard(rerender: () => void): HTMLElement | null {
-  if (CHAIN && !EXCHANGE_DEPLOYED) return null;
+/**
+ * The shop's wallet: the PEARL in hand on the left, and next to it the way to get more of it for BLEND (one way,
+ * fixed rate). On the contracts that is the PearlExchange; locally, the bottle's BLEND. Without an exchange only
+ * the balance is shown.
+ */
+function walletCard(rerender: () => void): HTMLElement {
   const s = getSave();
+  const balanceTile = h(
+    'div',
+    { class: 'xc-wallet' },
+    h('span', { class: 'xc-k', text: 'Your PEARL' }),
+    // whole PEARL, rounded down: on the contracts a balance has a fraction (a price is base × weight × quality)
+    h('span', { class: 'xc-balance pearl', text: pearl(Math.floor(s.pearl)), title: `${s.pearl.toLocaleString('en-US', { maximumFractionDigits: 4 })} PEARL` }),
+    h('span', { class: 'muted small', text: 'pays for rods, lures, repairs and energy' }),
+  );
+  if (CHAIN && !EXCHANGE_DEPLOYED) return h('section', { class: 'card xc xc-solo', attrs: { 'aria-label': 'Your PEARL' } }, balanceTile);
+
   const balance = CHAIN ? (world.blend?.balance ?? 0) : s.blend;
   const rate = CHAIN ? (world.blend?.pearlPerBlend ?? PEARL_PER_BLEND) : PEARL_PER_BLEND;
   const paused = CHAIN && !!world.blend?.paused;
   const signedOut = CHAIN && !state.wallet;
   const amount = (): number => Number(blendInput.replace(',', '.')) || 0;
   const fmt = (n: number): string => n.toLocaleString('en-US', { maximumFractionDigits: 4 });
-  const out = h('span', { class: 'pearl xc-out' });
-  const buy = h('button', { class: 'btn btn-primary btn-sm' });
+  const out = h('span', { class: 'xc-out' });
+  const buy = h('button', { class: 'btn btn-primary xc-buy' });
   const sync = (): void => {
     const a = amount();
-    out.textContent = a > 0 ? `= ${fmt(a * rate)} PEARL` : `1 BLEND = ${fmt(rate)} PEARL`;
-    buy.textContent = buyingPearl ? 'Buying…' : 'Buy PEARL';
+    out.textContent = `${fmt(a * rate)} PEARL`;
+    out.classList.toggle('zero', a <= 0);
+    buy.textContent = buyingPearl ? 'Buying…' : a > 0 ? `Buy ${fmt(a * rate)} PEARL` : 'Buy PEARL';
     buy.disabled = buyingPearl || paused || signedOut || a <= 0 || a > balance;
-    buy.title = signedOut ? 'Connect with Fluent first' : a > balance ? 'You do not have that much BLEND' : '';
+    buy.title = signedOut ? 'Connect with Fluent first' : a > balance ? 'You do not have that much BLEND' : a <= 0 ? 'Enter how much BLEND to spend' : '';
   };
   const input = h('input', {
     class: 'num xc-input',
@@ -269,42 +283,48 @@ function exchangeCard(rerender: () => void): HTMLElement | null {
     });
   });
   sync();
+  const note = paused
+    ? 'The exchange is paused right now.'
+    : signedOut
+      ? 'Connect with Fluent to trade. One way: PEARL cannot be turned back into BLEND.'
+      : `One way: PEARL cannot be turned back into BLEND. ${CHAIN ? 'The BLEND leaves your wallet for the game treasury.' : 'Local game: this spends the BLEND from your bottle.'}`;
   return h(
     'section',
-    { class: 'card xc', attrs: { 'aria-label': 'Buy PEARL for BLEND' } },
+    { class: 'card xc', attrs: { 'aria-label': 'Your PEARL, and buying more for BLEND' } },
+    balanceTile,
     h(
       'div',
-      { class: 'xc-text' },
-      h('h3', { text: 'Buy PEARL for BLEND' }),
-      h('p', {
-        class: 'muted small',
-        text: paused
-          ? 'The exchange is paused right now.'
-          : `Short on PEARL for a rod or a lure? Trade BLEND for it: 1 BLEND = ${fmt(rate)} PEARL, one way. ${CHAIN ? 'The BLEND leaves your wallet for the game treasury.' : 'Local game: this spends the BLEND from your bottle.'}`,
-      }),
-    ),
-    h(
-      'div',
-      { class: 'xc-form' },
-      h('span', { class: 'muted small' }, 'You have ', h('span', { class: 'blend', text: `${fmt(balance)} BLEND` })),
+      { class: 'xc-trade' },
+      h('div', { class: 'xc-head' }, h('h3', { text: 'Need more? Buy PEARL with BLEND' }), h('span', { class: 'badge xc-rate', text: `1 BLEND = ${fmt(rate)} PEARL` })),
       h(
         'div',
         { class: 'xc-row' },
-        input,
-        h('span', { class: 'blend xc-unit', text: 'BLEND' }),
-        h('button', {
-          class: 'btn btn-ghost btn-sm',
-          text: 'Max',
-          disabled: balance <= 0,
-          onclick: () => {
-            blendInput = String(balance);
-            input.value = blendInput;
-            sync();
-          },
-        }),
-        out,
+        h(
+          'div',
+          { class: 'xc-field' },
+          h('span', { class: 'xc-k' }, 'You pay · you have ', h('span', { class: 'blend', text: `${fmt(balance)} BLEND` })),
+          h(
+            'div',
+            { class: 'xc-pay' },
+            input,
+            h('span', { class: 'blend xc-unit', text: 'BLEND' }),
+            h('button', {
+              class: 'btn btn-ghost btn-sm',
+              text: 'Max',
+              disabled: balance <= 0,
+              onclick: () => {
+                blendInput = String(balance);
+                input.value = blendInput;
+                sync();
+              },
+            }),
+          ),
+        ),
+        h('span', { class: 'xc-arrow', text: '→', attrs: { 'aria-hidden': 'true' } }),
+        h('div', { class: 'xc-field' }, h('span', { class: 'xc-k', text: 'You get' }), out),
         buy,
       ),
+      h('p', { class: 'muted small xc-note', text: note }),
     ),
   );
 }
@@ -333,11 +353,12 @@ export function initTackle(host: HTMLElement, shop = false): () => void {
           'p',
           { class: 'muted' },
           'Rods and lures with different strengths. A rod makes the fight easier, a lure brings more bites; both can pull rarer and heavier fish. Lures are reusable and wear out over their casts. ',
-          shop ? h('span', { class: 'badge tk-badge', text: `You have ${pearl(s.pearl)} PEARL` }) : h('span', { class: 'badge tk-badge', text: 'Preview · not onchain yet' }),
+          shop ? null : h('span', { class: 'badge tk-badge', text: 'Preview · not onchain yet' }),
         ),
       ),
+      // the PEARL in hand and the way to get more: first, and apart from the loadout's numbers
+      shop ? walletCard(rerender) : null,
       loadoutCard(rod, lure, spot, shop, rerender),
-      shop ? exchangeCard(rerender) : null,
       h('h3', { class: 'tk-section', text: 'Rods' }),
       h('div', { class: 'tk-grid' }, RODS.map((r) => card(r, rod.id === r.id, pickRod(r.id), shop, spot))),
       h('h3', { class: 'tk-section', text: 'Lures' }),

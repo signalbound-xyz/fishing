@@ -1,13 +1,15 @@
-/** Header of the local game: level, PEARL, energy, and the optional Fluent Connect sign-in. */
+/**
+ * Header: level, PEARL, energy and the Fluent Connect sign-in. BLEND is not shown here: it is not spent at the
+ * water, and its balance is on the Tackle page, where it buys PEARL.
+ */
 import { energyCountdown, energyNow, refillPrice } from '../../game/actions';
-import { BLEND_PRIZE, TUNING } from '../../game/content';
+import { TUNING } from '../../game/content';
 import { levelOf, xpForLevel } from '../../game/economy';
 import { TIME_SETTINGS, setTimeSetting, timeOfDay, timeSetting, type TimeSetting } from '../../daytime';
 import { state } from '../../store';
 import { fmtCountdown, h, icon, mount, segBar, shortAddr, sigOf } from '../../ui/dom';
 import { fluentButton, type HeaderHandlers } from '../../ui/header';
-import { bottleOn, world } from '../chain';
-import { CHAIN, ops } from '../ops';
+import { ops } from '../ops';
 import { getSave, rev } from '../state';
 import { pearl } from './fmt';
 
@@ -16,7 +18,7 @@ let regenEl: HTMLElement | null = null;
 export function initLocalHeader(host: HTMLElement, on: HeaderHandlers): () => void {
   return mount(
     host,
-    () => sigOf(rev(), energyNow(getSave(), Date.now()), state.wallet?.address, state.fluentStatus, location.hash, world.blend?.balance, world.bottle?.chancePpm, timeSetting(), timeOfDay()),
+    () => sigOf(rev(), energyNow(getSave(), Date.now()), state.wallet?.address, state.fluentStatus, location.hash, timeSetting(), timeOfDay()),
     () => render(on),
   );
 }
@@ -65,7 +67,7 @@ function render(on: HeaderHandlers): HTMLElement[] {
       h('span', { class: 'logo' }, icon('bobber')),
       h('span', { class: 'wordmark' }, h('span', { class: 'wm-top', text: 'Onchain' }), h('span', { class: 'wm-main', text: 'Fishing' })),
     ),
-    h('nav', { class: 'topnav', attrs: { 'aria-label': 'Pages' } }, link('pond', 'Pond', '#/'), link('cup', 'Cup', '#/cup'), link('tackle', 'Tackle', '#/tackle')),
+    h('nav', { class: 'topnav', attrs: { 'aria-label': 'Pages' } }, link('pond', 'Pond', '#/'), link('tackle', 'Tackle', '#/tackle'), link('cup', 'Cup', '#/cup')),
     timeSwitch(),
     h(
       'div',
@@ -76,20 +78,7 @@ function render(on: HeaderHandlers): HTMLElement[] {
         h('span', { class: 'k', text: `Level ${level}` }),
         segBar(s.xp - from, to - from, 8, 'xp'),
       ),
-      h('div', { class: 'stat' }, h('span', { class: 'k', text: 'PEARL' }), h('span', { class: 'v pearl', text: pearl(s.pearl) })),
-      h(
-        'div',
-        {
-          class: 'stat',
-          title: bottleOn()
-            ? `From level ${world.bottle?.minLevel ?? BLEND_PRIZE.minLevel} there is a small chance to fish out a sealed bottle with ${(world.bottle?.amount ?? BLEND_PRIZE.amount).toLocaleString('en-US')} BLEND in any water. ${CHAIN ? (world.blend ? 'Shown here: the BLEND in your wallet, which buys PEARL on the Tackle page. A bottle is paid straight into it.' : 'A bottle is paid straight to your wallet.') : 'Local game: this is a counter in this browser.'}`
-            : CHAIN
-              ? 'The BLEND in your wallet: it pays tournament entries and buys PEARL on the Tackle page.'
-              : 'Local game: this is a counter in this browser.',
-        },
-        h('span', { class: 'k', text: 'BLEND' }),
-        h('span', { class: 'v blend', text: (CHAIN && world.blend ? world.blend.balance : s.blend).toLocaleString('en-US', { maximumFractionDigits: 2 }) }),
-      ),
+      h('div', { class: 'stat' }, h('span', { class: 'k', text: 'PEARL' }), h('span', { class: 'v pearl', text: pearl(Math.floor(s.pearl)) })),
       h(
         'div',
         { class: 'stat energy' },
