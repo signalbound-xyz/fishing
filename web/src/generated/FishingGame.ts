@@ -755,7 +755,7 @@ export const fishingGameAbi = [
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "e",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -879,7 +879,7 @@ export const fishingGameAbi = [
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "v",
         "type": "uint256",
         "internalType": "uint256"
       }

@@ -14,8 +14,9 @@
 #
 # With a fee the organiser breaks even at prize / fee entries and earns the rake from prize / (fee × (1 − rake)) on:
 # fee 5, prize 300, rake 15 → even at 60 anglers, 15% of the fees from 71.
+# Paid tournaments are opened with prize 0: the pool is the fees less the rake, and the organiser cannot lose.
 #
-# Example: ./new-tournament.sh "Pond Cup" 0 0 0 0 25000 60 4320 30 10 300 5 15
+# Example: ./new-tournament.sh "Pond Cup" 0 0 0 0 25000 60 10080 30 10 0 5 15
 set -euo pipefail
 cd "$(dirname "$0")"
 [[ $# -eq 13 ]] || { sed -n 2,20p "$0"; exit 1; }

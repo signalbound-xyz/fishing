@@ -111,10 +111,12 @@ A tournament may ask an **entry fee** in BLEND (`enter` takes it; the client sig
 | 71 | 301.75 | +53.25 |
 | 200 | 850 | +150 |
 
-So the organiser breaks even at guarantee ÷ fee entries and earns the rake from guarantee ÷ (fee × (1 − rake)) on; below that the guarantee is the cost of a prize worth entering for. Free tournaments (fee 0) work as before and are where a new player's first BLEND comes from.
+So the organiser breaks even at guarantee ÷ fee entries and earns the rake from guarantee ÷ (fee × (1 − rake)) on; below that the guarantee is the cost of a prize worth entering for.
+
+**Paid tournaments are opened without a guarantee** (prize 0): the pool is the fees less the rake, the organiser earns the rake from the first entry and can never lose, and a program that plays a perfect fight can only win what other anglers paid in, not money put up by the organiser. The price is a small prize in a small field (20 entries at 5 BLEND make a pool of 85). Free tournaments (fee 0) keep a small guarantee and are where a new player's first BLEND comes from.
 
 ```bash
-contracts/new-tournament.sh "Pond Cup" 0 0 0 0 25000 60 10080 30 10 300 5 15
+contracts/new-tournament.sh "Pond Cup" 0 0 0 0 25000 60 10080 30 10 0 5 15
 ```
 
 (the arguments are documented in the script; the last three are the guarantee, the fee and the rake in percent). `FightVerifier` is behind an interface, so the replay can be swapped for another implementation, for example a Rust contract on Fluent, with `Tournaments.setVerifier`.
