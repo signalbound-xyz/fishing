@@ -9,6 +9,7 @@
 import { EXPLORER_URL } from '../../config';
 import { LOCATIONS, QUALITIES, SPECIES } from '../../game/content';
 import { PULL, MAX_TICKS, TICK_MS, U, WARN, fightBand, fightParams, fightStart, fightTick, packInputs, pointsFor, type FightParams, type FightState } from '../../game/fight';
+import { openFluentConnect } from '../../fluent';
 import { RARITY_CLASS } from '../../i18n';
 import { WaterScene } from '../../scene';
 import { emit, state } from '../../store';
@@ -525,9 +526,9 @@ function controlsView(): HTMLElement[] {
   let info: string;
   let warn = false;
   if (!connected) {
-    button = h('button', { class: 'btn btn-cast', disabled: true }, 'Cast');
-    info = 'Connect with Fluent to take part';
-    warn = true;
+    // nobody is signed in: the big button is the way in, not a dead Cast
+    button = h('button', { class: 'btn btn-cast btn-wallet', attrs: { type: 'button' }, onclick: openFluentConnect }, icon('bobber'), 'Connect to cast');
+    info = '';
   } else if (stage === 'over' || stage === 'closing') {
     const share = myPlace >= 0 && myPlace < 3 ? c.prize * PRIZE_SHARES[myPlace] : 0;
     if (stage === 'over' && share > 0 && !e.claimed) {
@@ -562,7 +563,7 @@ function controlsView(): HTMLElement[] {
     button = h('button', { class: 'btn btn-cast', onclick: () => void doCast(c) }, 'Cast');
     info = `${left} of ${c.castLimit} casts left · no energy needed`;
   }
-  out.push(h('div', { class: 'cast-row' }, button, h('div', { class: 'cast-info' }, h('div', { class: warn ? 'warn' : 'muted', text: info }))));
+  out.push(h('div', { class: 'cast-row' }, button, info ? h('div', { class: 'cast-info' }, h('div', { class: warn ? 'warn' : 'muted', text: info })) : null));
 
   const tile = (k: string, v: string, d: string): HTMLElement => h('div', { class: 'tk-big' }, h('span', { class: 'k', text: k }), h('span', { class: 'v', text: v }), h('span', { class: 'd', text: d }));
   out.push(
@@ -573,9 +574,9 @@ function controlsView(): HTMLElement[] {
       h(
         'div',
         { class: 'tk-lo-out bonus-row' },
-        tile(c.fee > 0 ? 'Prize pool' : 'Prize', `${blend(c.prize)}`, 'BLEND · 50 / 30 / 20'),
+        tile(c.fee > 0 ? 'Prize pool' : 'Prize', `${blend(c.prize)}`, c.fee > 0 && c.guarantee <= 0 ? `BLEND · +${blend(c.fee * (1 - c.rake))} with each entry` : 'BLEND · 50 / 30 / 20'),
         tile('Entry', c.fee > 0 ? blend(c.fee) : 'Free', c.fee > 0 ? 'BLEND, once' : 'no fee'),
-        tile('Your score', String(e.total), e.entered ? (myPlace >= 0 ? `place ${myPlace + 1}` : 'no catch yet') : 'not entered'),
+        tile('Your score', connected ? String(e.total) : '—', !connected ? 'sign in to take part' : e.entered ? (myPlace >= 0 ? `place ${myPlace + 1}` : 'no catch yet') : 'not entered'),
         tile('Casts', e.entered ? `${Math.max(0, left)}` : String(c.castLimit), `${e.entered ? `of ${c.castLimit} left` : 'per angler'} · best ${c.counted} count`),
       ),
       e.best.length ? h('p', { class: 'small' }, h('span', { class: 'muted', text: 'Your counted catches: ' }), e.best.join(' · ')) : null,
@@ -629,7 +630,7 @@ function sideView(): HTMLElement[] {
               },
             },
             h('span', { class: 'spot-name', text: t.name }),
-            h('span', { class: 'spot-meta' }, h('span', { class: 'blend', text: `${blend(t.prize)} BLEND` }), h('span', { class: 'sep', text: t.fee > 0 ? `· entry ${blend(t.fee)} ·` : '· free ·' }), countdown(t, ''), t.entry.entered ? h('span', { class: 'sep', text: '· you are in' }) : null),
+            h('span', { class: 'spot-meta' }, h('span', { class: 'blend', text: t.fee > 0 && t.prize <= 0 ? 'pool from entries' : `${blend(t.prize)} BLEND` }), h('span', { class: 'sep', text: t.fee > 0 ? `· entry ${blend(t.fee)} ·` : '· free ·' }), countdown(t, ''), t.entry.entered ? h('span', { class: 'sep', text: '· you are in' }) : null),
           );
         }),
       ),

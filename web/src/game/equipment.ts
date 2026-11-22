@@ -16,6 +16,17 @@ export function itemEffects(item: TackleItem | null | undefined, loc: LocationDe
   return e;
 }
 
+/**
+ * What the water itself changes for an item, on top of its base effects: the home-water bonus, or the fly rod's
+ * penalty away from a current. Null when this water changes nothing for it.
+ */
+export function spotEffects(item: TackleItem | null | undefined, loc: LocationDef): Effects | null {
+  if (!item) return null;
+  const here = itemEffects(item, loc);
+  const d: Effects = { catch: here.catch - (item.base.catch ?? 0), rarity: here.rarity - (item.base.rarity ?? 0), weight: here.weight - (item.base.weight ?? 0) };
+  return d.catch || d.rarity || d.weight ? d : null;
+}
+
 export function specialEffects(sp: SpecialDef | null | undefined, loc: LocationDef): Effects {
   if (!sp?.bonus.effects) return ZERO;
   if (sp.bonus.locations && !sp.bonus.locations.includes(loc.id)) return ZERO;

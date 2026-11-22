@@ -5,14 +5,15 @@
  */
 import { activeSpecialOf, rodRepairPrice } from '../game/actions';
 import { LOCATIONS, PEARL_PER_BLEND } from '../game/content';
-import { itemEffects, totals } from '../game/equipment';
+import { itemEffects, spotEffects, totals } from '../game/equipment';
 import { greenWidth } from '../game/minigame';
 import { isUnlocked } from '../game/progress';
 import type { Effects as Fx } from '../game/types';
+import { openFluentConnect } from '../fluent';
 import { RARITY_CLASS, RARITY_NAMES } from '../i18n';
 import { EXCHANGE_DEPLOYED, world } from '../play/chain';
 import { CHAIN, ops } from '../play/ops';
-import { state } from '../store';
+import { emit, state } from '../store';
 import { getSave, rev } from '../play/state';
 import { h, icon, mount, sigOf } from '../ui/dom';
 import { LURES, RODS, lureById, rodById, type Effects, type TackleItem } from './catalog';
@@ -49,12 +50,13 @@ function effectRows(e: Effects): HTMLElement[] {
   ];
 }
 
+/** "+3 catch, +15 rarity" */
+const effectText = (e: Effects): string => [e.catch ? `${sign(e.catch)} catch` : '', e.rarity ? `${sign(e.rarity)} rarity` : '', e.weight ? `${sign(e.weight)}% weight` : ''].filter(Boolean).join(', ');
+
 function spotLine(item: TackleItem): HTMLElement | null {
   const s = item.spot;
   if (!s) return null;
-  const parts = [s.catch ? `${sign(s.catch)} catch` : '', s.rarity ? `${sign(s.rarity)} rarity` : '', s.weight ? `${sign(s.weight)}% weight` : '']
-    .filter(Boolean)
-    .join(', ');
+  const parts = effectText(s);
   return h(
     'div',
     { class: 'tk-spot' },
@@ -79,12 +81,39 @@ function versus(item: TackleItem, current: TackleItem | undefined, spot: number)
   return h('div', { class: `tk-vs ${better > 0 ? 'up' : better < 0 ? 'down' : ''}`, text: `vs your ${current.name} at ${LOCATIONS[spot].name}: ${parts.length ? parts.join(', ') : 'the same'}` });
 }
 
-function button(text: string, onclick: (() => void) | null, opts: { primary?: boolean; title?: string; disabled?: boolean } = {}): HTMLElement {
+/**
+ * The shop action on its way, e.g. "buy:rod:carbon". On the contracts it is a transaction: its button says so and
+ * every other action waits, because a second click would send a second transaction and fail.
+ */
+let pending: string | null = null;
+
+function run(key: string, op: () => Promise<unknown>): void {
+  if (pending) return;
+  pending = key;
+  emit();
+  void op().finally(() => {
+    pending = null;
+    emit();
+  });
+}
+
+interface ButtonOpts {
+  primary?: boolean;
+  title?: string;
+  disabled?: boolean;
+  /** With `busy`: the action's key and what the button says while it is on its way. */
+  key?: string;
+  busy?: string;
+}
+
+function button(text: string, onclick: (() => void) | null, opts: ButtonOpts = {}): HTMLElement {
+  const mine = pending !== null && pending === opts.key;
   return h('button', {
-    class: `btn btn-sm${opts.primary ? ' btn-primary' : ''}`,
-    text,
-    title: opts.title,
-    disabled: opts.disabled ?? !onclick,
+    class: `btn btn-sm${opts.primary ? ' btn-primary' : ''}${mine ? ' busy' : ''}`,
+    text: mine ? opts.busy ?? text : text,
+    title: mine ? 'Waiting for the transaction' : pending ? 'Another action is on its way' : opts.title,
+    disabled: pending !== null || (opts.disabled ?? !onclick),
+    attrs: mine ? { 'aria-busy': 'true' } : undefined,
     onclick: (e) => {
       e.stopPropagation();
       onclick?.();
@@ -92,30 +121,42 @@ function button(text: string, onclick: (() => void) | null, opts: { primary?: bo
   });
 }
 
+/** On the contracts the tackle belongs to an account: with nobody signed in the shop is a showcase. */
+const isGuest = (): boolean => CHAIN && !state.wallet;
+
 function actions(item: TackleItem, shop: boolean): HTMLElement[] {
+  if (isGuest()) return item.price ? [button('Sign in to buy', openFluentConnect, { title: 'Connect with Fluent to buy and equip tackle' })] : [];
   if (!shop) return [button('Soon', null, { title: 'Not onchain yet: rod types and lures need a contract update' })];
   const s = getSave();
   const short = s.pearl < item.price;
   const shortTitle = short ? `You need ${pearl(Math.ceil(item.price - s.pearl))} more PEARL` : undefined;
+  const key = (what: string): string => `${what}:${item.kind}:${item.id}`;
   if (item.kind === 'rod') {
-    if (!s.rods[item.id]) return [button(`Buy · ${pearl(item.price)}`, () => ((view.rod = item.id), void ops.buyRod(item.id)), { primary: true, disabled: short, title: shortTitle })];
+    if (!s.rods[item.id]) {
+      return [button(`Buy · ${pearl(item.price)}`, () => ((view.rod = item.id), run(key('buy'), () => ops.buyRod(item.id))), { primary: true, disabled: short, title: shortTitle, key: key('buy'), busy: 'Buying…' })];
+    }
     const repair = rodRepairPrice(s, item.id);
     return [
-      repair > 0 ? button(`Repair · ${pearl(repair)}`, () => void ops.repairRod(item.id), { disabled: s.pearl < repair }) : null,
-      s.equipped.rod === item.id ? button('Equipped', null) : button('Equip', () => ((view.rod = item.id), void ops.equipRod(item.id)), { primary: true }),
+      repair > 0 ? button(`Repair · ${pearl(repair)}`, () => run(key('repair'), () => ops.repairRod(item.id)), { disabled: s.pearl < repair, key: key('repair'), busy: 'Repairing…' }) : null,
+      s.equipped.rod === item.id
+        ? button('Equipped', null)
+        : button('Equip', () => ((view.rod = item.id), run(key('equip'), () => ops.equipRod(item.id))), { primary: true, key: key('equip'), busy: 'Equipping…' }),
     ].filter((x): x is HTMLElement => !!x);
   }
   const own = s.lures[item.id];
-  if (!own) return [button(`Buy · ${pearl(item.price)}`, () => ((view.lure = item.id), void ops.buyLure(item.id)), { primary: true, disabled: short, title: shortTitle })];
+  if (!own) {
+    return [button(`Buy · ${pearl(item.price)}`, () => ((view.lure = item.id), run(key('buy'), () => ops.buyLure(item.id))), { primary: true, disabled: short, title: shortTitle, key: key('buy'), busy: 'Buying…' })];
+  }
   return [
-    button(`+${item.wear} casts · ${pearl(item.price)}`, () => void ops.buyLure(item.id), { disabled: short, title: shortTitle ?? 'Adds casts to the lure you already carry' }),
+    button(`+${item.wear} casts · ${pearl(item.price)}`, () => run(key('buy'), () => ops.buyLure(item.id)), { disabled: short, title: shortTitle ?? 'Adds casts to the lure you already carry', key: key('buy'), busy: 'Buying…' }),
     s.equipped.lure === item.id
-      ? button('Take off', () => ((view.lure = null), void ops.equipLure(null)))
-      : button('Equip', () => ((view.lure = item.id), void ops.equipLure(item.id)), { primary: true }),
+      ? button('Take off', () => ((view.lure = null), run(key('off'), () => ops.equipLure(null))), { key: key('off'), busy: 'Taking off…' })
+      : button('Equip', () => ((view.lure = item.id), run(key('equip'), () => ops.equipLure(item.id))), { primary: true, key: key('equip'), busy: 'Equipping…' }),
   ];
 }
 
-function card(item: TackleItem, selected: boolean, onPick: () => void, shop: boolean, spot: number): HTMLElement {
+/** `onPick` null: nothing to preview the item in (a visitor sees no loadout), so the card is not a button. */
+function card(item: TackleItem, selected: boolean, onPick: (() => void) | null, shop: boolean, spot: number): HTMLElement {
   const s = getSave();
   const sprite = item.kind === 'rod' ? rodSprite(item.id, item.name) : lureSprite(item.id, item.name);
   const owned = item.kind === 'rod' ? s.rods[item.id] : s.lures[item.id];
@@ -128,8 +169,8 @@ function card(item: TackleItem, selected: boolean, onPick: () => void, shop: boo
     'article',
     {
       class: `tk-card ${RARITY_CLASS[item.tier]}${selected ? ' sel' : ''}${shop && owned ? ' owned' : ''}`,
-      attrs: { tabindex: '0', role: 'button', 'aria-pressed': String(selected), 'aria-label': `${item.name}: preview in the loadout` },
-      onclick: onPick,
+      attrs: onPick ? { tabindex: '0', role: 'button', 'aria-pressed': String(selected), 'aria-label': `${item.name}: preview in the loadout` } : undefined,
+      onclick: onPick ?? undefined,
     },
     h(
       'div',
@@ -173,11 +214,38 @@ function loadoutCard(rod: TackleItem, lure: TackleItem | null, spot: number, sho
   const previewing = shop && (rod.id !== eqRod.id || (lure?.id ?? null) !== (eqLure?.id ?? null));
   const delta = (now: number, was: number, unit = ''): HTMLElement | null =>
     previewing && now !== was ? h('span', { class: `delta ${now > was ? 'up' : 'down'}`, text: ` ${sign(Math.round((now - was) * 10) / 10)}${unit}` }) : null;
+  // what this water does to the chosen tackle: the numbers above move only by these
+  const here = (item: TackleItem): HTMLElement => {
+    const e = spotEffects(item, loc);
+    const gain = e ? (e.catch ?? 0) + (e.rarity ?? 0) + (e.weight ?? 0) > 0 : false;
+    const home = item.spot ? item.spot.spots.map((i) => LOCATIONS[i].name).join(', ') : '';
+    return h(
+      'li',
+      { class: e ? (gain ? 'up' : 'down') : '' },
+      h('strong', { text: item.name }),
+      e ? h('span', { class: 'v', text: `${effectText(e)} in ${loc.name}` }) : h('span', { class: 'muted', text: item.spot ? `no bonus in ${loc.name} · its water: ${home}` : 'the same in every water' }),
+    );
+  };
+  /** How a water treats the chosen pair: a bonus for the rod or the lure, only a penalty, or nothing. */
+  const mark = (l: (typeof LOCATIONS)[number]): { cls: string; title: string } => {
+    const lines = [rod, lure].flatMap((it) => {
+      const e = it ? spotEffects(it, l) : null;
+      return it && e ? [{ text: `${it.name}: ${effectText(e)}`, gain: (e.catch ?? 0) + (e.rarity ?? 0) + (e.weight ?? 0) > 0 }] : [];
+    });
+    if (!lines.length) return { cls: '', title: 'The chosen tackle has no bonus here' };
+    return { cls: lines.some((x) => x.gain) ? ' boost' : ' drag', title: lines.map((x) => x.text).join(' · ') };
+  };
+  const marks = LOCATIONS.map(mark);
   const tile = (k: string, v: string, d: HTMLElement | null, hint: string): HTMLElement => h('div', { class: 'tk-big' }, h('span', { class: 'k', text: k }), h('span', { class: 'v' }, v, d), h('span', { class: 'd', text: hint }));
   return h(
     'section',
     { class: 'card tk-loadout', attrs: { 'aria-label': 'Loadout estimate' } },
-    h('div', { class: 'dex-head' }, h('h3', { text: 'Loadout' }), previewing ? h('span', { class: 'badge', text: 'Preview · compared with your equipped tackle' }) : null),
+    h(
+      'div',
+      { class: 'dex-head' },
+      h('h3', { text: 'Loadout' }),
+      previewing ? h('span', { class: 'badge', text: 'Preview · compared with your equipped tackle' }) : null,
+    ),
     h(
       'div',
       { class: 'tk-lo-grid' },
@@ -199,18 +267,22 @@ function loadoutCard(rod: TackleItem, lure: TackleItem | null, spot: number, sho
       h(
         'div',
         { class: 'tk-lo-spots', attrs: { role: 'radiogroup', 'aria-label': 'Location' } },
-        LOCATIONS.map((l) =>
-          h(
+        LOCATIONS.map((l, i) => {
+          const m = marks[i];
+          return h(
             'button',
             {
-              class: `tk-spotbtn${spot === l.id ? ' active' : ''}`,
+              class: `tk-spotbtn${spot === l.id ? ' active' : ''}${m.cls}`,
+              title: m.title,
               attrs: { role: 'radio', 'aria-checked': String(spot === l.id) },
               onclick: () => ((view.spot = l.id), rerender()),
             },
             shop && !isUnlocked(s, l) ? icon('lock', 'Locked') : null,
             l.name,
-          ),
-        ),
+          );
+        }),
+        marks.some((m) => m.cls === ' boost') ? h('span', { class: 'tk-spot-legend', text: 'bonus for this tackle' }) : null,
+        marks.some((m) => m.cls === ' drag') ? h('span', { class: 'tk-spot-legend drag', text: 'penalty' }) : null,
       ),
       h(
         'div',
@@ -220,11 +292,27 @@ function loadoutCard(rod: TackleItem, lure: TackleItem | null, spot: number, sho
         tile('Rare odds', t.total.rarity ? `+${t.total.rarity}` : '—', delta(t.total.rarity, base.total.rarity), 'weighting toward rarer fish'),
         tile('Fish weight', t.total.weight ? `+${t.total.weight}%` : '—', delta(t.total.weight, base.total.weight, '%'), 'heavier: more PEARL, more points'),
       ),
+      h('ul', { class: 'tk-lo-here', attrs: { 'aria-label': `What ${loc.name} changes for this tackle` } }, here(rod), lure ? here(lure) : null),
     ),
     h('p', {
       class: 'tk-note',
       text: 'Rarity is a relative weighting, not percentage points: +100 makes a Rare fish three times as likely against a Common one. Bonuses add up: rod + lure + location bonus + active special fish.',
     }),
+  );
+}
+
+/** In place of the wallet for a visitor who is not signed in: what the sign-in gives, and the way in. */
+function signInCard(): HTMLElement {
+  return h(
+    'section',
+    { class: 'card tk-signin', attrs: { 'aria-label': 'Sign in to shop' } },
+    h(
+      'div',
+      { class: 'tk-signin-text' },
+      h('h3', { text: 'Sign in to shop' }),
+      h('p', { class: 'muted', text: 'Your PEARL, rods and lures belong to your account. Until you connect, the rods and lures below are open to browse.' }),
+    ),
+    h('button', { class: 'btn btn-primary btn-wallet', attrs: { type: 'button' }, onclick: openFluentConnect }, icon('bobber'), 'Connect with Fluent'),
   );
 }
 
@@ -262,7 +350,8 @@ function walletCard(rerender: () => void): HTMLElement {
     out.textContent = `${fmt(a * rate)} PEARL`;
     out.classList.toggle('zero', a <= 0);
     buy.textContent = buyingPearl ? 'Buying…' : a > 0 ? `Buy ${fmt(a * rate)} PEARL` : 'Buy PEARL';
-    buy.disabled = buyingPearl || paused || signedOut || a <= 0 || a > balance;
+    buy.disabled = buyingPearl || pending !== null || paused || signedOut || a <= 0 || a > balance;
+    buy.classList.toggle('busy', buyingPearl);
     buy.title = signedOut ? 'Connect with Fluent first' : a > balance ? 'You do not have that much BLEND' : a <= 0 ? 'Enter how much BLEND to spend' : '';
   };
   const input = h('input', {
@@ -332,10 +421,13 @@ function walletCard(rerender: () => void): HTMLElement {
 export function initTackle(host: HTMLElement, shop = false): () => void {
   const render = (): (HTMLElement | null)[] => {
     const s = getSave();
-    const rod = rodById(view.rod ?? (shop ? s.equipped.rod : 'carbon')) ?? RODS[0];
-    const lureId = view.lure === undefined ? (shop ? s.equipped.lure : 'spoon') : view.lure;
+    const guest = shop && isGuest();
+    // whose tackle the page talks about: the player's own, or nobody's (a preview, or a visitor not signed in)
+    const mine = shop && !guest;
+    const rod = rodById(view.rod ?? (mine ? s.equipped.rod : 'carbon')) ?? RODS[0];
+    const lureId = view.lure === undefined ? (mine ? s.equipped.lure : 'spoon') : view.lure;
     const lure = lureById(lureId) ?? null;
-    const spot = view.spot ?? (shop ? s.location : 0);
+    const spot = view.spot ?? (mine ? s.location : 0);
     const pickRod = (id: string) => () => {
       view.rod = id;
       rerender();
@@ -357,15 +449,16 @@ export function initTackle(host: HTMLElement, shop = false): () => void {
         ),
       ),
       // the PEARL in hand and the way to get more: first, and apart from the loadout's numbers
-      shop ? walletCard(rerender) : null,
-      loadoutCard(rod, lure, spot, shop, rerender),
+      guest ? signInCard() : shop ? walletCard(rerender) : null,
+      // a visitor has no tackle to estimate: the page stays a sign-in panel and the catalogue
+      guest ? null : loadoutCard(rod, lure, spot, mine, rerender),
       h('h3', { class: 'tk-section', text: 'Rods' }),
-      h('div', { class: 'tk-grid' }, RODS.map((r) => card(r, rod.id === r.id, pickRod(r.id), shop, spot))),
+      h('div', { class: 'tk-grid' }, RODS.map((r) => card(r, !guest && rod.id === r.id, guest ? null : pickRod(r.id), mine, spot))),
       h('h3', { class: 'tk-section', text: 'Lures' }),
-      h('div', { class: 'tk-grid' }, LURES.map((l) => card(l, lure?.id === l.id, pickLure(l.id), shop, spot))),
+      h('div', { class: 'tk-grid' }, LURES.map((l) => card(l, !guest && lure?.id === l.id, guest ? null : pickLure(l.id), mine, spot))),
     ];
   };
-  const rerender = mount(host, () => sigOf(rev(), view, shop, world.blend?.balance, world.blend?.paused, state.wallet?.address, buyingPearl), render);
+  const rerender = mount(host, () => sigOf(rev(), view, shop, world.blend?.balance, world.blend?.paused, state.wallet?.address, buyingPearl, pending), render);
   host.addEventListener('keydown', (e) => {
     const t = e.target as HTMLElement;
     if ((e.key === 'Enter' || e.key === ' ') && t.classList.contains('tk-card')) {

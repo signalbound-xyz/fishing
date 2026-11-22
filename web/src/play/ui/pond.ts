@@ -48,6 +48,7 @@ import { lureById, rodById } from '../../tackle/catalog';
 import { lureSprite, rodSprite } from '../../tackle/sprites';
 import { fmtWeight, h, icon, mount, segBar, sigOf } from '../../ui/dom';
 import { dropdown } from '../../ui/dropdown';
+import { openFluentConnect } from '../../fluent';
 import { toast } from '../../ui/toast';
 import { fishArt } from '../fishSprite';
 import { blocksUntilExpiry, outcomeOf, previewCast, tx, waitPastBlock, world } from '../chain';
@@ -55,6 +56,7 @@ import { CHAIN, ops, refresh, refreshStandings } from '../ops';
 import { act, commit, getSave, rev } from '../state';
 import { track, trackCast, trackLanding } from '../telemetry';
 import { pearl, qualityTag, rarityTag } from './fmt';
+import { celebrateLevel } from './levelup';
 import { showPrizeReveal } from './prize';
 
 /** 'landing' exists on the contracts only: the reel transaction is on its way. */
@@ -761,7 +763,10 @@ function showCatch(l: Landing, fightLine: string | null = null): void {
   if (l.newSpecies) note('gold', 'New species discovered');
   if (l.newOverallRecord) note('gold', 'Your heaviest fish ever');
   else if (l.newBest) note('', `Personal best for ${sp.name}`);
-  if (l.levelUp) note('gold', `Level ${l.levelUp}!`);
+  if (l.levelUp) {
+    note('gold', `Level ${l.levelUp}!`);
+    celebrateLevel();
+  }
   for (const id of l.unlocked) note('gold', `${LOCATIONS[id].name} unlocked`);
   const canQuickSell = !f.isSpecial && !isValuable(f);
   overlayEl.replaceChildren(
@@ -854,18 +859,24 @@ function renderControlsView(): HTMLElement[] {
   const busy = pondBusy();
   const out: HTMLElement[] = [];
 
-  const reason = CHAIN && !state.wallet ? 'Connect with Fluent to fish' : castBlocker(s, now);
+  const guest = CHAIN && !state.wallet;
+  const reason = guest ? null : castBlocker(s, now);
   const cost = LOCATIONS[s.location].energyCost;
   out.push(
     h(
       'div',
       { class: 'cast-row' },
-      h('button', { class: 'btn btn-cast', disabled: busy || !!reason, onclick: doCast }, busy ? 'In the water…' : 'Cast'),
-      h(
-        'div',
-        { class: 'cast-info' },
-        h('div', { class: reason && !busy ? 'warn' : 'muted', text: busy ? 'Press Hook! the moment the float dips, then hold to reel (Space works too)' : reason ?? `Costs ${cost} energy · you have ${energyNow(s, now)}` }),
-      ),
+      // nobody is signed in: the big button is the way in, not a dead Cast
+      guest
+        ? h('button', { class: 'btn btn-cast btn-wallet', attrs: { type: 'button' }, onclick: openFluentConnect }, icon('bobber'), 'Connect to cast')
+        : h('button', { class: 'btn btn-cast', disabled: busy || !!reason, onclick: doCast }, busy ? 'In the water…' : 'Cast'),
+      guest
+        ? null
+        : h(
+            'div',
+            { class: 'cast-info' },
+            h('div', { class: reason && !busy ? 'warn' : 'muted', text: busy ? 'Press Hook! the moment the float dips, then hold to reel (Space works too)' : reason ?? `Costs ${cost} energy · you have ${energyNow(s, now)}` }),
+          ),
     ),
   );
 

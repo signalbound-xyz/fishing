@@ -18,15 +18,25 @@ import { track } from './telemetry';
 export const CHAIN = !LOCAL_GAME;
 
 let refreshing: Promise<void> | null = null;
+/** The account whose state has been read at least once (or whose first read has failed): the UI stops waiting for it. */
+let readFor: string | null = null;
+/** False between the sign-in and the first read of that account's state: what is on screen is still an empty save. */
+export const playerRead = (): boolean => !CHAIN || !state.wallet || readFor === state.wallet.address;
+
 /** Re-reads the player's state from the contracts (chain mode only). Concurrent calls share one read. */
 export function refresh(): Promise<void> {
   if (!CHAIN) return Promise.resolve();
   refreshing ??= (async () => {
+    const who = state.wallet?.address ?? null;
     try {
       const s = await loadChainSave();
+      readFor = who;
       if (s) replaceSave(s);
     } catch (e) {
       console.warn('refresh failed', e);
+      // the next refresh tries again; meanwhile the page shows what it has instead of waiting forever
+      readFor = who;
+      emit();
     } finally {
       refreshing = null;
     }

@@ -23,7 +23,7 @@ import {
 } from './actions';
 import { BLEND_PRIZE, LOCATIONS, PEARL_PER_BLEND, SPECIALS, SPECIES, TUNING } from './content';
 import { avgWeight, fishPrice, levelOf, xpForLevel } from './economy';
-import { totals } from './equipment';
+import { spotEffects, totals } from './equipment';
 import { rollSpecial, rollWeight, speciesOdds } from './generate';
 import { CLEAN_HOOK_HEAD_START, SKILLS, START_DIST, biteDelay, difficultyOf, hookWindow, isCleanHook, qualityOf, reelParams, reelStart, reelStep, simulateFight, type Difficulty } from './minigame';
 import { achievements, canEnter, grantUnlocks, holdsSpecial, isUnlocked, purchaseState, unlockMet } from './progress';
@@ -85,6 +85,23 @@ describe('equipment bonuses', () => {
   it('penalises the fly rod away from moving water', () => {
     expect(totals(rod('flyrod'), null, LOCATIONS[0]).rod.catch).toBe(-4);
     expect(totals(rod('flyrod'), null, LOCATIONS[4]).rod.catch).toBe(4);
+  });
+  it('says what a water changes for an item, and nothing where it changes nothing', () => {
+    expect(spotEffects(rod('carbon'), LOCATIONS[0])).toEqual({ catch: 3, rarity: 15, weight: 0 });
+    expect(spotEffects(rod('carbon'), LOCATIONS[7])).toBeNull();
+    expect(spotEffects(rod('flyrod'), LOCATIONS[0])).toEqual({ catch: -4, rarity: 0, weight: 0 });
+    expect(spotEffects(rod('willow'), LOCATIONS[2])).toBeNull();
+    expect(spotEffects(null, LOCATIONS[2])).toBeNull();
+    // base plus what the water changes is what the loadout adds up
+    for (const item of [...RODS, ...LURES]) {
+      for (const loc of LOCATIONS) {
+        const d = spotEffects(item, loc);
+        const here = totals(item.kind === 'rod' ? item : rod('willow'), item.kind === 'lure' ? item : null, loc)[item.kind];
+        expect(here.catch).toBe((item.base.catch ?? 0) + (d?.catch ?? 0));
+        expect(here.rarity).toBe((item.base.rarity ?? 0) + (d?.rarity ?? 0));
+        expect(here.weight).toBe((item.base.weight ?? 0) + (d?.weight ?? 0));
+      }
+    }
   });
   it('caps bite chance, zone, rarity and weight', () => {
     for (const r of RODS)

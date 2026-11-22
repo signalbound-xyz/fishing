@@ -2937,3 +2937,287 @@ div.item {
 .footer a {
   color: inherit;
 }
+
+/* An action on its way (a transaction): the button keeps its place, says what it is doing and shows a turning square */
+.btn.busy {
+  cursor: progress;
+}
+.btn.busy::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  vertical-align: -1px;
+  background: currentColor;
+  animation: busy-turn 0.9s steps(4) infinite;
+}
+@keyframes busy-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.busy::before {
+    animation: none;
+  }
+}
+/* it is disabled while it waits, but must not look switched off like the buttons around it */
+.btn.busy:disabled {
+  color: var(--text);
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--accent-line);
+}
+
+/* ============================================================ a new level (header)
+   The level block is lit for a moment: the label turns gold and blinks, a light runs along the bar twice,
+   a hard ring steps out of it, and square confetti flies off (levelup.ts). --lvl-t is a negative delay
+   that keeps the animations in step when the header re-renders in the middle of the show. */
+.stat.levelup .k {
+  color: var(--r4);
+  animation: lvl-blink 0.28s steps(1, end) 4;
+  animation-delay: var(--lvl-t, 0ms);
+}
+@keyframes lvl-blink {
+  0% {
+    color: var(--text);
+  }
+  50% {
+    color: var(--r4);
+  }
+}
+.stat.levelup .segbar {
+  animation: lvl-ring 0.7s steps(5, end) 3;
+  animation-delay: var(--lvl-t, 0ms);
+}
+@keyframes lvl-ring {
+  0% {
+    box-shadow:
+      inset 0 0 0 1px var(--r4),
+      0 0 0 0 var(--r4);
+  }
+  100% {
+    box-shadow:
+      inset 0 0 0 1px var(--r4),
+      0 0 0 8px transparent;
+  }
+}
+.stat.levelup .seg {
+  animation: lvl-seg 0.7s steps(1, end) 2;
+  animation-delay: calc(var(--lvl-t, 0ms) + var(--lvl-i, 0) * 55ms);
+}
+.stat.levelup .seg:nth-child(2) { --lvl-i: 1; }
+.stat.levelup .seg:nth-child(3) { --lvl-i: 2; }
+.stat.levelup .seg:nth-child(4) { --lvl-i: 3; }
+.stat.levelup .seg:nth-child(5) { --lvl-i: 4; }
+.stat.levelup .seg:nth-child(6) { --lvl-i: 5; }
+.stat.levelup .seg:nth-child(7) { --lvl-i: 6; }
+.stat.levelup .seg:nth-child(8) { --lvl-i: 7; }
+/* an inset shadow wider than the block paints it over, and gives the block its own colour back when it ends */
+@keyframes lvl-seg {
+  0% {
+    box-shadow: inset 0 0 0 6px var(--text);
+  }
+  22% {
+    box-shadow: inset 0 0 0 6px var(--r4);
+  }
+  50%,
+  100% {
+    box-shadow: inset 0 0 0 6px transparent;
+  }
+}
+.lvl-burst {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  overflow: hidden;
+  pointer-events: none;
+}
+.lvl-burst span {
+  position: absolute;
+  box-shadow: 0 0 0 1px var(--bg-deep);
+}
+@media (prefers-reduced-motion: reduce) {
+  .stat.levelup .k,
+  .stat.levelup .segbar,
+  .stat.levelup .seg {
+    animation: none;
+  }
+}
+
+/* ============================================================ loading blocks (header)
+   A value that has not arrived yet: its box keeps the size of the text it will hold, the text itself is hidden. */
+.stats .skel,
+.stats .btn.skel:disabled {
+  color: transparent;
+  background: var(--line-soft);
+  cursor: default;
+  user-select: none;
+  animation: skel 0.8s steps(4, end) infinite alternate;
+}
+.stats .btn.skel:disabled {
+  box-shadow: 0 0 0 2px var(--bg-deep);
+}
+.stats .segbar.skel {
+  background: var(--bg-deep);
+}
+@keyframes skel {
+  to {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stats .skel,
+  .stats .btn.skel:disabled {
+    animation: none;
+  }
+}
+
+/* ============================================================ confirm dialog
+   A question before PEARL is spent. The same box as a catch reveal, over a dimmed page. */
+dialog.confirm {
+  width: min(340px, calc(100vw - 32px));
+  padding: 18px 20px 20px;
+  border: 0;
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--line), 4px 4px 0 2px var(--shadow);
+  animation: pop 0.2s steps(3, end);
+}
+dialog.confirm::backdrop {
+  background: color-mix(in srgb, var(--scrim) 70%, transparent);
+}
+.confirm-title {
+  font: 600 20px/1.2 var(--font-body);
+  color: var(--text);
+}
+.confirm-rows {
+  margin: 14px 0 0;
+  display: grid;
+  gap: 2px;
+}
+.confirm-rows > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 10px;
+  background: var(--panel-2);
+}
+.confirm-rows dt {
+  font: 600 11px/1 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.confirm-rows dd {
+  margin: 0;
+  font: 400 15px/1 var(--font-px);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.confirm-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.confirm-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+@media (max-width: 420px) {
+  .confirm-actions {
+    flex-direction: column-reverse;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog.confirm {
+    animation: none;
+  }
+}
+
+/* ============================================================ the shop for a visitor who is not signed in
+   The wallet's place on the Tackle page: what the sign-in gives, and the button. */
+.tk-signin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 24px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 16px 18px;
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--accent-line);
+}
+.tk-signin-text {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.tk-signin h3 {
+  margin: 0 0 4px;
+}
+.tk-signin p {
+  margin: 0;
+  max-width: 62ch;
+}
+
+/* ============================================================ loadout: what the chosen water changes
+   The four numbers move only by the tackle's bonus in a water; these lines and the marks on the waters say where. */
+.tk-spotbtn.boost::before,
+.tk-spotbtn.drag::before,
+.tk-spot-legend::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  vertical-align: 0;
+  background: var(--accent);
+}
+.tk-spotbtn.drag::before,
+.tk-spot-legend.drag::before {
+  background: var(--warn);
+}
+.tk-spot-legend {
+  align-self: center;
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.tk-lo-here {
+  grid-column: 1 / -1;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.tk-lo-here li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 7px 10px;
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.tk-lo-here li.up {
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.tk-lo-here li.up .v {
+  color: var(--accent-hi);
+  font-weight: 600;
+}
+.tk-lo-here li.down .v {
+  color: var(--warn);
+  font-weight: 600;
+}
+/* a visitor's card previews nothing: it is not a button */
+.tk-card:not([role]) {
+  cursor: default;
+}
+.tk-card:not([role]):hover {
+  background: var(--panel);
+}
