@@ -305,6 +305,19 @@ export const bulkSellable = (f: FishInstance): boolean => !f.isFavorite && !f.is
 export const isShowcased = (s: Save, id: string): boolean => (s.showcase ?? []).includes(id);
 /** No Sell button takes this fish: the player saved it, or it is on display. */
 export const isProtected = (s: Save, f: FishInstance): boolean => f.isFavorite || isShowcased(s, f.id);
+/** Every saved fish, on the wall or not. */
+export const savedFish = (s: Save): FishInstance[] => s.fish.filter((f) => f.isFavorite);
+/**
+ * The reserve: saved fish that are not on display. It is a view of the saved fish, not a place: nothing is moved
+ * into or out of it. A fish taken down from the wall is in it at once, because it is still saved.
+ */
+export const reserveFish = (s: Save): FishInstance[] => s.fish.filter((f) => f.isFavorite && !isShowcased(s, f.id));
+/** The three numbers the Trophies tab shows. `saved` is always `shown + reserve`. */
+export function collectionCounts(s: Save): { shown: number; reserve: number; saved: number; owned: number } {
+  const saved = savedFish(s).length;
+  const reserve = reserveFish(s).length;
+  return { shown: saved - reserve, reserve, saved, owned: s.fish.length };
+}
 
 /**
  * Sells exactly the given fish. All-or-nothing: an unknown id, a duplicate, a saved or a displayed fish aborts the

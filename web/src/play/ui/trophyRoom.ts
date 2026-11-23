@@ -1,5 +1,6 @@
 /**
- * The Trophy Room (six frames, in the player's order) and the Saved Fish below it.
+ * The Trophy Room (six frames, in the player's order) and, below it, the reserve: the saved fish that are not on
+ * the wall. The reserve is a view of the saved fish, so nothing is shown twice; "All Saved" shows them all.
  *
  * The room is drawn from plain data (`Trophy`), not from the save: a public room of another account can be drawn
  * with the same `frame` once the six ids come from an account-based store (game/showcase.ts).
@@ -7,13 +8,13 @@
  * Nothing here is a dialog. Choosing a fish for a frame, and choosing which trophy a seventh fish replaces, both
  * happen in place, under the room.
  */
-import { isShowcased, saleValue } from '../../game/actions';
+import { collectionCounts, isShowcased, reserveFish, saleValue, savedFish } from '../../game/actions';
 import { LOCATIONS, SPECIES } from '../../game/content';
 import { SHOWCASE_SLOTS, freeSlot, shownCount, slotOf } from '../../game/showcase';
 import type { FishInstance, Quality, Save } from '../../game/types';
 import { RARITY_CLASS, RARITY_NAMES } from '../../i18n';
 import { emit, state } from '../../store';
-import { fmtWeight, h } from '../../ui/dom';
+import { fmtWeight, h, icon } from '../../ui/dom';
 import { dropdown } from '../../ui/dropdown';
 import { toast } from '../../ui/toast';
 import { fishArt } from '../fishSprite';
@@ -98,7 +99,8 @@ export function frame(t: Trophy | null, slot: number, o: FrameOpts = {}): HTMLEl
       h('span', { class: 'frame-name', text: sp.name }),
       h('span', { class: 'item-tags' }, rarityTag(t.rarity), qualityTag(t.quality), h('span', { class: 'frame-weight', text: fmtWeight(t.weight) })),
       h('span', { class: 'frame-where', title: `Caught in ${LOCATIONS[t.locationId]?.name ?? 'unknown waters'} on ${catchDate(t.caughtAt)}`, text: `${LOCATIONS[t.locationId]?.name ?? ''} · ${catchDate(t.caughtAt)}` }),
-      t.record ? h('span', { class: 'frame-record', text: `★ ${RECORD_LABEL[t.record]}` }) : null,
+      // a medal, not the star: the star means "saved"
+      t.record ? h('span', { class: 'frame-record' }, icon('medal'), RECORD_LABEL[t.record]) : null,
     ),
   );
 }
@@ -113,8 +115,12 @@ const SORTS: [Sort, string][] = [
   ['value', 'Value'],
 ];
 
+type View = 'reserve' | 'all';
+
 const ui = {
   sort: 'date' as Sort,
+  /** Which saved fish the list under the room shows: the ones not on the wall, or all of them. */
+  view: 'reserve' as View,
   /** The frame whose actions are open. */
   selected: null as number | null,
   /** The frame a fish is being chosen for. */
@@ -143,7 +149,7 @@ function hung(slot: number): void {
 }
 
 /**
- * Hangs a fish from anywhere in the game (the Saved Fish, the catch card). With a free frame it is done at once;
+ * Hangs a fish from anywhere in the game (the reserve, the catch card). With a free frame it is done at once;
  * with a full room the player is asked, in the room, which trophy it replaces: 'choose'.
  */
 export function addToRoom(id: string): 'hung' | 'choose' | 'refused' {
@@ -180,7 +186,7 @@ function place(id: string, slot: number): void {
   if (!done || !f) return;
   const old = done.replaced ? before.fish.find((x) => x.id === done.replaced) : undefined;
   hung(done.slot);
-  toast(old ? `${label(f)} replaces ${label(old)}, which stays in your Saved Fish` : `${label(f)} hangs in frame ${done.slot + 1}`, 'ok');
+  toast(old ? `${label(f)} replaces ${label(old)}, which moves to your reserve` : `${label(f)} hangs in frame ${done.slot + 1}`, 'ok');
 }
 
 const by: Record<Sort, (a: FishInstance, b: FishInstance) => number> = {
@@ -243,7 +249,7 @@ function roomSection(s: Save, rerender: () => void): HTMLElement {
     below = h(
       'div',
       { class: 'room-bar', attrs: { role: 'status' } },
-      h('span', null, h('b', { text: 'The room is full. ' }), `Choose the trophy that ${label(placing)} replaces. It goes back to your Saved Fish and stays protected.`),
+      h('span', null, h('b', { text: 'The room is full. ' }), `Choose the trophy that ${label(placing)} replaces. It moves to your reserve and stays protected.`),
       h('div', { class: 'spacer' }),
       h('button', {
         class: 'btn btn-sm btn-ghost',
@@ -282,10 +288,10 @@ function roomSection(s: Save, rerender: () => void): HTMLElement {
       h('button', {
         class: 'btn btn-sm',
         text: 'Take down',
-        title: 'Leaves the frame empty. The fish stays in your Saved Fish, protected from selling',
+        title: 'Leaves the frame empty. The fish moves to your reserve: still saved, still protected from selling',
         attrs: { type: 'button' },
         onclick: () => {
-          if (ops.unshowcaseFish(picked.id)) toast(`${label(picked)} is back in your Saved Fish, still protected`, 'info');
+          if (ops.unshowcaseFish(picked.id)) toast(`${label(picked)} is in your reserve now: still saved, still protected`, 'info');
           ui.selected = null;
           rerender();
         },
@@ -322,7 +328,7 @@ function picker(s: Save, slot: number, rerender: () => void): HTMLElement {
     h(
       'div',
       { class: 'room-bar' },
-      h('span', null, h('b', { text: current ? `Replace ${label(current)} in frame ${slot + 1}` : `Choose a fish for frame ${slot + 1}` }), current ? '. It stays in your Saved Fish.' : ''),
+      h('span', null, h('b', { text: current ? `Replace ${label(current)} in frame ${slot + 1}` : `Choose a fish for frame ${slot + 1}` }), current ? '. It moves to your reserve.' : ''),
       h('div', { class: 'spacer' }),
       h('button', { class: 'btn btn-sm btn-ghost', text: 'Cancel', attrs: { type: 'button' }, onclick: close }),
     ),
@@ -346,28 +352,62 @@ function picker(s: Save, slot: number, rerender: () => void): HTMLElement {
 }
 
 function savedSection(s: Save, rerender: () => void): HTMLElement {
-  const list = s.fish.filter((f) => f.isFavorite).sort(by[ui.sort]);
+  const n = collectionCounts(s);
+  const all = ui.view === 'all';
+  const list = (all ? savedFish(s) : reserveFish(s)).sort(by[ui.sort]);
   const now = Date.now();
   const full = freeSlot(s.showcase) < 0;
+  const name = all ? 'All Saved' : 'In Reserve';
+  const views: [View, string, number][] = [
+    ['reserve', 'In Reserve', n.reserve],
+    ['all', 'All Saved', n.saved],
+  ];
+  const empty = isGuest()
+    ? 'Sign in to see the fish you saved.'
+    : n.saved === 0
+      ? 'No saved fish yet. Tap ☆ Save on a fish in the Keepnet, or on the card of a fresh catch.'
+      : 'All your saved fish are on display. Save more catches to build your reserve.';
   return h(
     'section',
-    { class: 'saved', attrs: { 'aria-label': 'Saved Fish' } },
+    { class: 'saved-sec', attrs: { 'aria-label': `Saved Fish, ${name}` } },
     h(
       'div',
       { class: 'dex-head' },
-      h('h3', { text: 'Saved Fish' }),
-      h('span', { class: 'badge', text: String(list.length) }),
+      h('h3', { text: `Saved Fish · ${name}` }),
+      h('span', { class: 'badge', attrs: { 'aria-label': `${list.length} fish` }, text: String(list.length) }),
       h('div', { class: 'spacer' }),
-      list.length > 1 ? dropdown({ label: 'Sort', value: ui.sort, small: true, options: SORTS.map(([value, text]) => ({ value, label: text })), onPick: (v) => ((ui.sort = v as Sort), rerender()) }) : null,
+      // kept whenever there is something to sort in either view, so switching views does not move the row
+      n.saved > 1 ? dropdown({ label: 'Sort', value: ui.sort, small: true, options: SORTS.map(([value, text]) => ({ value, label: text })), onPick: (v) => ((ui.sort = v as Sort), rerender()) }) : null,
+    ),
+    h(
+      'div',
+      { class: 'chips', attrs: { role: 'tablist', 'aria-label': 'Which saved fish to show' } },
+      views.map(([k, text, count]) =>
+        h(
+          'button',
+          {
+            class: `chip${ui.view === k ? ' active' : ''}`,
+            attrs: { type: 'button', role: 'tab', 'aria-selected': String(ui.view === k), 'aria-label': `${text}: ${count}` },
+            onclick: () => {
+              ui.view = k;
+              rerender();
+            },
+          },
+          text,
+          h('span', { class: 'chip-n', text: String(count) }),
+        ),
+      ),
     ),
     h('p', {
       class: 'muted small',
-      text: `Every fish you starred. Saved fish are skipped by Sell all and cannot be picked for a sale until you remove the star.${
-        CHAIN ? ' The star is kept in this browser for this account. It does not lock the NFT: outside the game a fish can still be transferred or traded.' : ''
-      }`,
+      text: `${
+        all
+          ? 'Every fish you saved, on the wall and in reserve. All of them are protected from selling until you remove the star.'
+          : 'Fish saved for later. Protected from selling and ready to display in your Trophy Room.'
+      }${CHAIN ? ' The star is kept in this browser for this account. It does not lock the NFT: outside the game a fish can still be transferred or traded.' : ''}`,
     }),
     list.length === 0
-      ? h('p', { class: 'empty', text: isGuest() ? 'Sign in to see the fish you saved.' : 'No saved fish yet. Tap ☆ Save on a fish in the Keepnet, or on the card of a fresh catch.' })
+      ? h('p', { class: 'empty', text: empty })
       : h(
           'div',
           { class: 'grid saved-grid' },
@@ -382,7 +422,7 @@ function savedSection(s: Save, rerender: () => void): HTMLElement {
               h('span', { class: 'item-tags' }, rarityTag(f.rarity), qualityTag(f.quality), f.isSpecial ? h('span', { class: 'badge', text: 'Special' }) : null),
               h('span', { class: 'item-meta' }, h('span', { text: fmtWeight(f.weight) }), h('span', { class: 'pearl', text: `${pearl(saleValue(f, now))} P` })),
               h('span', { class: 'muted small', text: `${LOCATIONS[f.locationId]?.name ?? ''} · ${ago(f.caughtAt)}` }),
-              shown ? h('span', { class: 'saved-mark', text: `On display · frame ${slot + 1}` }) : null,
+              shown ? h('span', { class: 'saved-mark', text: `On display · Frame ${slot + 1}` }) : null,
               shown
                 ? h('button', { class: 'btn btn-sm', text: 'Take down', attrs: { type: 'button' }, onclick: () => void ops.unshowcaseFish(f.id) })
                 : h('button', {

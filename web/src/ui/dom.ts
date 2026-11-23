@@ -128,6 +128,8 @@ const ICONS: Record<string, [number, number, string]> = {
   fish: [10, 6, '3,0,4,1,--dim;1,1,7,1,--dim;0,2,9,2,--dim;1,4,7,1,--dim;3,5,4,1,--dim;7,1,1,1,--panel;9,1,1,4,--dim'],
   // a fish hook lying on its side: eye on the left, shank along the line, bend on the right, point and barb below
   hook: [8, 5, '0,1,7,1,--text;7,2,1,2,--text;4,4,3,1,--text;4,3,1,1,--text'],
+  // a medal on its ribbon: a personal record. Not the star, which means "saved"
+  medal: [5, 7, '1,0,1,2,--accent;3,0,1,2,--accent;1,2,3,1,--r4;0,3,5,3,--r4;1,6,3,1,--r4;2,4,1,1,--ink'],
   bobber: [5, 9, '2,0,1,2,--muted;1,2,3,1,#c2453b;0,3,5,2,#c2453b;1,3,1,1,#e7766a;0,5,5,2,#e6e4dc;1,7,3,1,#e6e4dc;2,8,1,1,--muted'],
   // time of day (9×9): the sun on the horizon, high sun, low red sun, crescent moon
   morning: [9, 9, '4,0,1,1,#e9b949;1,2,1,1,#e9b949;7,2,1,1,#e9b949;3,3,3,1,#f2cf6b;2,4,5,2,#f2cf6b;0,6,9,1,--muted;2,8,5,1,--dim'],

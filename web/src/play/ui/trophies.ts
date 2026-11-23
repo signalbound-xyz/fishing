@@ -95,7 +95,7 @@ function render(rerender: () => void): HTMLElement[] {
                     h('span', { text: fmtWeight(f.weight) }),
                     qualityTag(f.quality),
                     h('span', { class: 'muted small', text: `${LOCATIONS[f.locationId].name} · ${ago(f.caughtAt)}` }),
-                    isShowcased(s, f.id) ? h('span', { class: 'saved-mark', text: 'On display' }) : null,
+                    isShowcased(s, f.id) ? h('span', { class: 'saved-mark', text: `On display · Frame ${s.showcase.indexOf(f.id) + 1}` }) : null,
                     h('div', { class: 'spacer' }),
                     h('button', {
                       class: `btn btn-sm btn-ghost save-btn${f.isFavorite ? ' on' : ''}`,

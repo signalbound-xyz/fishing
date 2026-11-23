@@ -3668,19 +3668,19 @@ button.link {
 
 /* the room: a wall with six frames */
 .room,
-.saved {
+.saved-sec {
   display: grid;
   gap: 10px;
 }
 .room p,
-.saved p {
+.saved-sec p {
   margin: 0;
 }
 .special-head {
   padding-top: 12px;
   border-top: 1px solid var(--line-soft);
 }
-.saved {
+.saved-sec {
   padding-top: 12px;
   border-top: 1px solid var(--line-soft);
 }
@@ -3815,8 +3815,29 @@ button.frame {
   color: var(--muted);
 }
 .frame-record {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font: 600 11px/1.3 var(--font-body);
   color: var(--r4);
+}
+.reveal .note.record {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+/* a count inside a chip: "In Reserve 3" */
+.chip-n {
+  margin-left: 6px;
+  padding: 1px 4px 0;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--bg-deep) 55%, transparent);
+  color: var(--text-2);
+}
+.chip.active .chip-n {
+  background: color-mix(in srgb, var(--ink) 22%, transparent);
+  color: var(--ink);
 }
 .frame.empty {
   --wood: var(--panel-3);

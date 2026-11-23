@@ -53,7 +53,9 @@ buy tackle → rarer fish, new waters.
   contract's `currentWeek()`. Opponents are generated and labelled DEMO; no rank rewards are paid.
 - **Saved fish and the Trophy Room**: the star on a fish (☆ Save / ★ Saved) keeps it out of every sale until the
   star is removed. The Trophies tab opens with **My Trophy Room**, six frames the player fills and orders by hand
-  (a fish on display is always saved), then **Saved Fish**, every starred fish, then the special fish as before. The
+  (a fish on display is always saved), then **Saved Fish · In Reserve**, the saved fish that are not on the wall (a
+  view, `reserveFish`, so no fish is listed twice; "All Saved" lists them all), then the special fish as before. The
+  star means saved; a personal record wears a medal. The
   catch card offers Save fish and, for a Rare or better fish or a personal best, Add to Trophy Room. The rules are in
   `game/actions.ts` (`toggleFavorite`, `showcaseFish`, `unshowcaseFish`, `moveTrophy`, `sellFish`) and
   `game/showcase.ts`. In the local game both live in the save. On the contracts they are preferences of this

@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { GameError, bulkSellable, isProtected, isShowcased, landFish, moveTrophy, sellFish, setActiveSpecial, showcaseFish, toggleFavorite, unshowcaseFish, type CastTicket } from './actions';
+import {
+  GameError,
+  bulkSellable,
+  collectionCounts,
+  isProtected,
+  isShowcased,
+  landFish,
+  moveTrophy,
+  reserveFish,
+  savedFish,
+  sellFish,
+  setActiveSpecial,
+  showcaseFish,
+  toggleFavorite,
+  unshowcaseFish,
+  type CastTicket,
+} from './actions';
 import { LOCATIONS, SPECIALS, SPECIES } from './content';
 import { avgWeight } from './economy';
 import { totals } from './equipment';
@@ -157,6 +173,133 @@ describe('the Trophy Room', () => {
     // down first, then the star, then it sells
     const free = toggleFavorite(unshowcaseFish(s, 'a'), 'a');
     expect(sellFish(free, ['a'], LATER).save.fish).toHaveLength(0);
+  });
+});
+
+describe('the reserve: saved fish that are not on the wall', () => {
+  const ids = (list: FishInstance[]): string[] => list.map((f) => f.id);
+  /** a and b on the wall, c saved but not shown, d and e plain. */
+  function mixed(): Save {
+    let s = keepnet('a', 'b', 'c', 'd', 'e');
+    s = showcaseFish(s, 'a').save;
+    s = showcaseFish(s, 'b').save;
+    return toggleFavorite(s, 'c');
+  }
+
+  it('leaves out what is on display, so no fish is listed twice', () => {
+    const s = mixed();
+    expect(ids(reserveFish(s))).toEqual(['c']);
+    expect(reserveFish(s).some((f) => isShowcased(s, f.id))).toBe(false);
+    // the same thing the spec writes out
+    expect(ids(reserveFish(s))).toEqual(ids(s.fish.filter((f) => f.isFavorite && !isShowcased(s, f.id))));
+  });
+
+  it('"All Saved" has every saved fish, the displayed ones included', () => {
+    const s = mixed();
+    expect(ids(savedFish(s))).toEqual(['a', 'b', 'c']);
+    expect(ids(savedFish(s)).filter((id) => isShowcased(s, id))).toEqual(['a', 'b']);
+  });
+
+  it('a fish taken down is in the reserve at once, still saved and still not for sale', () => {
+    const s = mixed();
+    const down = unshowcaseFish(s, 'a');
+    expect(ids(reserveFish(down))).toEqual(['a', 'c']);
+    expect(isShowcased(down, 'a')).toBe(false);
+    expect(down.fish.find((f) => f.id === 'a')!.isFavorite).toBe(true);
+    expect(() => sellFish(down, ['a'], LATER)).toThrow(/protected/);
+    expect(down.fish.filter(bulkSellable).map((f) => f.id)).toEqual(['d', 'e']);
+  });
+
+  it('a replaced trophy moves to the reserve; the new one is saved and leaves it', () => {
+    const s = mixed();
+    // c comes out of the reserve onto the wall, in place of a
+    const h1 = showcaseFish(s, 'c', 0);
+    expect(h1.replaced).toBe('a');
+    expect(ids(reserveFish(h1.save))).toEqual(['a']);
+    expect(h1.save.fish.find((f) => f.id === 'a')!.isFavorite).toBe(true); // unchanged
+    // an unsaved fish replaces b: it becomes saved, b goes to the reserve
+    const h2 = showcaseFish(h1.save, 'd', 1);
+    expect(h2.replaced).toBe('b');
+    expect(h2.save.fish.find((f) => f.id === 'd')!.isFavorite).toBe(true);
+    expect(ids(reserveFish(h2.save))).toEqual(['a', 'b']);
+    expect(h2.save.showcase.slice(0, 2)).toEqual(['c', 'd']);
+  });
+
+  it('showing an unsaved fish saves it without putting it in the reserve', () => {
+    const s = keepnet('a', 'b');
+    expect(savedFish(s)).toHaveLength(0);
+    const shown = showcaseFish(s, 'a').save;
+    expect(ids(savedFish(shown))).toEqual(['a']);
+    expect(reserveFish(shown)).toHaveLength(0);
+  });
+
+  it('what is on display stays out of every sale', () => {
+    const s = mixed();
+    expect(() => sellFish(s, ['a'], LATER)).toThrow(/Trophy Room/);
+    expect(() => sellFish(s, ['d', 'b'], LATER)).toThrow(/Trophy Room/);
+    expect(() => sellFish(s, ['c'], LATER)).toThrow(/protected/); // and so does the reserve
+    expect(sellFish(s, ['d', 'e'], LATER).save.fish.map((f) => f.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('to sell a displayed fish: down from the wall, then off with the star', () => {
+    const s = mixed();
+    expect(() => toggleFavorite(s, 'a')).toThrow(/take it down first/); // the star stays while it hangs
+    const down = unshowcaseFish(s, 'a');
+    expect(() => sellFish(down, ['a'], LATER)).toThrow(/protected/); // in reserve: still saved
+    const free = toggleFavorite(down, 'a');
+    expect(ids(reserveFish(free))).toEqual(['c']); // it has left the reserve as well
+    expect(sellFish(free, ['a'], LATER).earned).toBe(10);
+    // a fish in the reserve only needs the star removed
+    expect(sellFish(toggleFavorite(s, 'c'), ['c'], LATER).earned).toBe(10);
+  });
+
+  it('counts: frames, reserve and all saved always add up, and the keepnet is not touched', () => {
+    let s = keepnet('a', 'b', 'c', 'd', 'e');
+    expect(collectionCounts(s)).toEqual({ shown: 0, reserve: 0, saved: 0, owned: 5 });
+    for (const id of ['a', 'b', 'c', 'd']) s = showcaseFish(s, id).save;
+    // four on the wall and nothing else saved: 4/6 frames, reserve 0, all saved 4
+    expect(collectionCounts(s)).toEqual({ shown: 4, reserve: 0, saved: 4, owned: 5 });
+    expect(shownCount(s.showcase)).toBe(4);
+    s = toggleFavorite(s, 'e');
+    expect(collectionCounts(s)).toEqual({ shown: 4, reserve: 1, saved: 5, owned: 5 });
+    s = unshowcaseFish(s, 'b');
+    expect(collectionCounts(s)).toEqual({ shown: 3, reserve: 2, saved: 5, owned: 5 });
+    s = showcaseFish(s, 'e', 0).save; // e replaces a
+    expect(collectionCounts(s)).toEqual({ shown: 3, reserve: 2, saved: 5, owned: 5 });
+    s = toggleFavorite(s, 'a');
+    expect(collectionCounts(s)).toEqual({ shown: 3, reserve: 1, saved: 4, owned: 5 });
+    const c = collectionCounts(s);
+    expect(c.shown + c.reserve).toBe(c.saved);
+    expect(s.fish).toHaveLength(5); // nothing was moved, copied or lost
+  });
+
+  it('the wall keeps its order whatever happens in the reserve', () => {
+    let s = keepnet('a', 'b', 'c', 'd', 'e');
+    s = showcaseFish(s, 'c', 4).save;
+    s = showcaseFish(s, 'a', 1).save;
+    const wall = [...s.showcase];
+    s = toggleFavorite(s, 'd'); // into the reserve
+    s = toggleFavorite(s, 'e');
+    s = toggleFavorite(s, 'd'); // and out again
+    expect(s.showcase).toEqual(wall);
+    expect(s.showcase).toEqual([null, 'a', null, null, 'c', null]);
+    // taking one down leaves the other where it hangs
+    expect(unshowcaseFish(s, 'a').showcase).toEqual([null, null, null, null, 'c', null]);
+  });
+
+  it('survives a reload: the wall, the reserve and everything else', () => {
+    const s: Save = { ...mixed(), pearl: 321, xp: 999 };
+    const back = loadSave(JSON.stringify(s), LATER);
+    expect(back.status).toBe('ok');
+    expect(back.save).toEqual(s);
+    expect(ids(reserveFish(back.save))).toEqual(['c']);
+    expect(collectionCounts(back.save)).toEqual(collectionCounts(s));
+    // a save from before the Trophy Room: its favourites are simply the reserve
+    const old = JSON.parse(JSON.stringify(toggleFavorite(keepnet('a', 'b'), 'b'))) as Record<string, unknown>;
+    delete old.showcase;
+    const loaded = loadSave(JSON.stringify(old), LATER).save;
+    expect(ids(reserveFish(loaded))).toEqual(['b']);
+    expect(collectionCounts(loaded)).toEqual({ shown: 0, reserve: 1, saved: 1, owned: 2 });
   });
 });
 

@@ -767,10 +767,12 @@ function showCatch(l: Landing, fightLine: string | null = null): void {
   const sp = SPECIES[f.speciesId];
   const notes: HTMLElement[] = [];
   const note = (cls: string, text: string): void => void notes.push(h('div', { class: `note ${cls}`, text }));
+  // a record wears a medal; the star is kept for "saved"
+  const record = (text: string): void => void notes.push(h('div', { class: 'note gold record' }, icon('medal'), text));
   if (f.isSpecial) note('gold', 'Special fish! See the Trophies tab');
   if (l.newSpecies) note('gold', 'New species discovered');
-  if (l.newOverallRecord) note('gold record', '★ Your heaviest fish ever');
-  else if (l.newBest) note('gold record', `★ Personal best for ${sp.name}`);
+  if (l.newOverallRecord) record('Heaviest catch ever');
+  else if (l.newBest) record(`Personal best for ${sp.name}`);
   if (l.levelUp) {
     note('gold', `Level ${l.levelUp}!`);
     celebrateLevel();
