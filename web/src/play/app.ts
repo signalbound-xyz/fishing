@@ -15,7 +15,7 @@ import { initPond, pondBusy, tickPond } from './ui/pond';
 import { initRanks, tickRanks } from './ui/ranks';
 import { initStats } from './ui/stats';
 import { initTrophies } from './ui/trophies';
-import { catalogMismatches } from './chain';
+import { catalogMismatches, forgetInventory } from './chain';
 import { CHAIN, refresh, refreshStandings } from './ops';
 import { tickDaily } from './daily';
 import { replaceSave } from './state';
@@ -134,7 +134,11 @@ function onFluentChange(s: FluentAccountState): void {
   else if (s.status === 'disconnected') state.wallet = null;
   if (CHAIN && state.wallet?.address !== before) {
     if (state.wallet) void refresh().then(refreshStandings);
-    else replaceSave(freshSave(Date.now())); // signed out: back to an empty view
+    else {
+      // signed out: back to an empty view
+      forgetInventory();
+      replaceSave(freshSave(Date.now()));
+    }
   }
   emit();
 }
@@ -153,7 +157,10 @@ const renders = [
     openAccount: openFluentAccount,
     disconnect: () => {
       state.wallet = null;
-      if (CHAIN) replaceSave(freshSave(Date.now()));
+      if (CHAIN) {
+        forgetInventory();
+        replaceSave(freshSave(Date.now()));
+      }
       emit();
       void disconnectFluent().catch((e) => console.warn('fluent disconnect', e));
     },

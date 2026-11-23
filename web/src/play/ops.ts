@@ -11,7 +11,7 @@ import { achievements } from '../game/progress';
 import type { Save } from '../game/types';
 import { emit, state } from '../store';
 import { LURES, RODS } from '../tackle/catalog';
-import { buyPearlOnChain, loadChainSave, loadStandings, rememberLocation, toggleFavouriteLocal, tx, type GameCall } from './chain';
+import { buyPearlOnChain, inventoryReadFor, loadChainSave, loadStandings, rememberCollection, rememberLocation, tx, type GameCall } from './chain';
 import { toast } from '../ui/toast';
 import { syncDaily } from './daily';
 import { act, apply, getSave, replaceSave } from './state';
@@ -68,6 +68,28 @@ async function send(label: string, request: GameCall): Promise<boolean> {
 const rodIndex = (id: string): number => RODS.findIndex((r) => r.id === id);
 const lureIndex = (id: string): number => LURES.findIndex((l) => l.id === id);
 const local = (fn: (s: Save) => Save): Promise<boolean> => Promise.resolve(apply(fn));
+
+/**
+ * A change to what the player saved or displays. The same rules in both modes (game/actions.ts); what differs is
+ * where the result is kept: the local save, or this browser's preferences for the signed-in account. Nothing is
+ * sent to the chain. A refusal becomes a toast and changes nothing.
+ */
+function collect(fn: (s: Save) => Save): Save | undefined {
+  if (!CHAIN) return act(fn, (s) => s);
+  const me = state.wallet?.address;
+  // only against the account's own keepnet, as it was last read
+  if (!me || !inventoryReadFor(me)) return undefined;
+  try {
+    const next = fn(getSave());
+    rememberCollection(me, next);
+    replaceSave(next);
+    return next;
+  } catch (e) {
+    if (e instanceof A.GameError) toast(e.message, 'err');
+    else throw e;
+    return undefined;
+  }
+}
 
 type Bought = 'rod' | 'lure' | 'repair' | 'refill' | 'location' | 'pearl';
 /** Telemetry: a purchase that went through, at the price shown when it was asked for. */
@@ -149,15 +171,22 @@ export const ops = {
     return earned;
   },
 
-  /** Favourites are a client-side convenience in both modes: they only guard the Sell buttons. */
-  async toggleFavorite(id: string): Promise<boolean> {
-    if (!CHAIN) return apply((s) => A.toggleFavorite(s, id));
-    const me = state.wallet?.address;
-    if (!me) return false;
-    toggleFavouriteLocal(me, id);
-    replaceSave(A.toggleFavorite(getSave(), id));
-    return true;
+  /** The star. A client-side convenience in both modes: it only guards the game's Sell buttons. */
+  toggleFavorite: (id: string): boolean => collect((s) => A.toggleFavorite(s, id)) !== undefined,
+
+  /**
+   * Hangs a fish in the Trophy Room (and saves it): in the first empty frame, or in `slot`, replacing what hangs
+   * there. Resolves to where it went, or undefined when it did not (the room is full and no slot was named).
+   */
+  showcaseFish(id: string, slot?: number): { slot: number; replaced: string | null } | undefined {
+    let hung: A.Hung | undefined;
+    const done = collect((s) => (hung = A.showcaseFish(s, id, slot)).save);
+    return done && hung ? { slot: hung.slot, replaced: hung.replaced } : undefined;
   },
+
+  unshowcaseFish: (id: string): boolean => collect((s) => A.unshowcaseFish(s, id)) !== undefined,
+
+  moveTrophy: (from: number, to: number): boolean => collect((s) => A.moveTrophy(s, from, to)) !== undefined,
 
   setActiveSpecial: (id: string | null): Promise<boolean> =>
     CHAIN

@@ -6,6 +6,7 @@
  * reward or NFT eligibility; that has to come from a trusted backend or the chain.
  */
 import { TUNING } from './content';
+import { cleanShowcase, emptyShowcase, keepOwned } from './showcase';
 import type { Save } from './types';
 
 export const SAVE_VERSION = 1;
@@ -36,6 +37,7 @@ export function freshSave(now: number): Save {
     claimed: [],
     stats: { casts: 0, catches: 0, escaped: 0, sold: 0, earned: 0 },
     daily: { day: 0, set: null, catches: [], streak: { day: 0, count: 0 } },
+    showcase: emptyShowcase(),
   };
 }
 
@@ -87,5 +89,11 @@ export function loadSave(json: string | null, now: number, migrations = MIGRATIO
   for (const k of ['equipped', 'records', 'stats', 'refills', 'daily']) {
     merged[k] = { ...(base[k] as Raw), ...(isObj(data[k]) ? (data[k] as Raw) : {}) };
   }
-  return { save: merged as unknown as Save, status: from === current ? 'ok' : 'migrated' };
+  const save = merged as unknown as Save;
+  // The Trophy Room: a save from before it has none. A frame holds only a fish that is still there, and a fish on
+  // display is a saved fish, whatever a hand-edited save says.
+  const fish = Array.isArray(save.fish) ? save.fish : [];
+  save.showcase = keepOwned(cleanShowcase(merged.showcase), new Set(fish.map((f) => f.id))).showcase;
+  if (fish.some((f) => !f.isFavorite && save.showcase.includes(f.id))) save.fish = fish.map((f) => (save.showcase.includes(f.id) ? { ...f, isFavorite: true } : f));
+  return { save, status: from === current ? 'ok' : 'migrated' };
 }

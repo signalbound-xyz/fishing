@@ -6,11 +6,12 @@
 import { erc20Abi, formatEther, parseEther, parseEventLogs, type Address, type TransactionReceipt } from 'viem';
 import { bottlePoolAbi, fishingGameAbi, gameLensAbi, pearlExchangeAbi } from '../abi';
 import { publicClient } from '../clients';
-import { LOCAL_GAME, deployment } from '../config';
+import { CHAIN_ID, LOCAL_GAME, deployment } from '../config';
 import { resolveCast, type CastOutcome, type ChainCatalog } from '../game/chainOutcome';
 import { LOCATIONS, QUALITIES, SPECIALS, SPECIES, TUNING, BLEND_PRIZE } from '../game/content';
 import { achievements } from '../game/progress';
 import { freshSave } from '../game/save';
+import { reconcile, type Prefs } from '../game/showcase';
 import { tournamentScore } from '../game/tournament';
 import type { FishInstance, Rarity, Save } from '../game/types';
 import { state } from '../store';
@@ -19,6 +20,7 @@ import { fluentSend } from '../fluent';
 import { friendlyError } from '../errors';
 import { sendTx, TxError } from '../tx';
 import { toast } from '../ui/toast';
+import { loadPrefs, storePrefs, type PrefsScope } from './prefs';
 
 const zero = '0x0000000000000000000000000000000000000000' as Address;
 const game = { address: deployment?.game ?? zero, abi: fishingGameAbi } as const;
@@ -52,23 +54,29 @@ export const world: World = { cast: null, rolls: { blendWins: 0, xp: 0n, special
 
 // ------------------------------------------------------------------ client-side preferences (not game state)
 
-const favKey = (a: Address): string => `onchain-fishing:favs:${a.toLowerCase()}`;
-function favourites(a: Address): Set<string> {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(favKey(a)) ?? '[]') as string[]);
-  } catch {
-    return new Set();
-  }
+// Saved fish and the Trophy Room: this browser's, per chain, fish collection and account (play/prefs.ts). They
+// guard the game's own Sell buttons; the contracts know nothing of them.
+const scopeOf = (a: Address): PrefsScope => ({ chainId: CHAIN_ID, collection: deployment?.fish ?? zero, address: a });
+/** Preferences the browser would not store (private mode, quota): kept for as long as the page is open. */
+let unsaved: { address: string; prefs: Prefs } | null = null;
+const prefsOf = (a: Address): Prefs => (unsaved?.address === a.toLowerCase() ? unsaved.prefs : loadPrefs(scopeOf(a)));
+function keepPrefs(a: Address, prefs: Prefs): void {
+  unsaved = storePrefs(scopeOf(a), prefs) ? null : { address: a.toLowerCase(), prefs };
 }
-export function toggleFavouriteLocal(a: Address, id: string): void {
-  const set = favourites(a);
-  if (set.has(id)) set.delete(id);
-  else set.add(id);
-  try {
-    localStorage.setItem(favKey(a), JSON.stringify([...set]));
-  } catch {
-    /* a convenience only */
-  }
+/** The account whose keepnet the current save was read from. Preferences are only changed against a real read. */
+let inventoryOf: string | null = null;
+export const inventoryReadFor = (a: Address): boolean => inventoryOf === a.toLowerCase();
+/** The view was emptied (signed out): what is on screen is no longer anybody's keepnet. */
+export const forgetInventory = (): void => void (inventoryOf = null);
+
+/**
+ * Writes down the stars and the frames of `save`, which is the account's own view after a real read. Saved fish
+ * the view does not hold are left as they were: that is for the next read to decide.
+ */
+export function rememberCollection(a: Address, save: Save): void {
+  const here = new Set(save.fish.map((f) => f.id));
+  const elsewhere = prefsOf(a).saved.filter((id) => !here.has(id));
+  keepPrefs(a, { saved: [...elsewhere, ...save.fish.filter((f) => f.isFavorite).map((f) => f.id)], showcase: save.showcase });
 }
 const LOC_KEY = 'onchain-fishing:location';
 export function rememberLocation(id: number): void {
@@ -103,8 +111,16 @@ export async function loadChainSave(): Promise<Save | null> {
   const now = Date.now();
   const skew = now - Number(v.timestamp) * 1000;
   const p = v.p;
-  const favs = favourites(me);
   const [ids, list, values] = keep;
+  // The keepnet was read, so the preferences can be held against it: a fish that was sold or transferred leaves
+  // its frame and its star. A failed read never gets here, and so never empties the room.
+  const kept = reconcile(prefsOf(me), ids.map((id) => id.toString()));
+  if (kept.changed) keepPrefs(me, kept.prefs);
+  if (kept.droppedTrophies.length) {
+    const n = kept.droppedTrophies.length;
+    toast(`${n === 1 ? 'A trophy is' : `${n} trophies are`} no longer in your keepnet: ${n === 1 ? 'its frame is' : 'their frames are'} empty now`, 'info');
+  }
+  const favs = new Set(kept.prefs.saved);
 
   const fish: FishInstance[] = ids
     .map((id, i) => {
@@ -153,6 +169,7 @@ export async function loadChainSave(): Promise<Save | null> {
   s.equipped = { rod: RODS[p.rod]?.id ?? 'willow', lure: p.lure === 0 ? null : (LURES[p.lure - 1]?.id ?? null) };
   if (s.equipped.lure && !s.lures[s.equipped.lure]) s.equipped.lure = null;
   s.fish = fish;
+  s.showcase = kept.prefs.showcase;
   s.dex = {};
   v.dex.forEach((d, i) => {
     if (d.count > 0) s.dex[i] = { count: d.count, best: d.best, firstAt: 0 };
@@ -185,6 +202,7 @@ export async function loadChainSave(): Promise<Save | null> {
   world.rolls = { blendWins: p.blendWins, xp: p.xp, specialsFound: p.specialsFound, dry: [...v.dry] };
   world.week = week;
   world.loaded = true;
+  inventoryOf = me.toLowerCase();
   return s;
 }
 

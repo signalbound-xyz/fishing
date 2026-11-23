@@ -2039,31 +2039,6 @@ div.item {
 .item.kept {
   cursor: default;
 }
-.star {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  font-size: 14px;
-  line-height: 1;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--bg-deep) 80%, transparent);
-  box-shadow: inset 0 0 0 1px var(--line);
-  cursor: pointer;
-}
-.star.on {
-  color: var(--r4);
-  box-shadow: inset 0 0 0 1px var(--r4);
-}
-.star.special {
-  color: var(--r5);
-  cursor: default;
-}
 .item.r5:not(.sel) .nft-img {
   box-shadow: inset 0 0 0 2px var(--r5);
 }
@@ -3600,4 +3575,364 @@ dialog.confirm::backdrop {
 }
 .tip[hidden] {
   display: none;
+}
+
+/* ------------------------------------------------------------ saved fish and the Trophy Room */
+button.link {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+/* the star, spelled out: "☆ Save" / "★ Saved" */
+.save-btn {
+  font: 600 11px/1 var(--font-body);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.save-btn.on-art {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 5px 7px 4px;
+  border: 0;
+  background: color-mix(in srgb, var(--bg-deep) 86%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: pointer;
+}
+.save-btn.on-art:hover {
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--r4);
+}
+.save-btn.on,
+.btn.save-btn.on {
+  color: var(--r4);
+}
+.save-btn.on-art.on {
+  background: color-mix(in srgb, var(--r4) 16%, var(--bg-deep));
+  box-shadow: inset 0 0 0 1px var(--r4);
+}
+.btn.save-btn {
+  font-size: 13px;
+}
+.btn.save-btn.on {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--r4);
+}
+/* a catch worth keeping: the Save button asks to be noticed, without moving */
+.btn.save-btn.hot {
+  color: var(--r4);
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--r4);
+  animation: save-hot 1.2s steps(2, end) infinite;
+}
+@keyframes save-hot {
+  50% {
+    background: color-mix(in srgb, var(--r4) 22%, var(--panel-2));
+  }
+}
+.saved-mark {
+  font: 600 11px/1.3 var(--font-body);
+  letter-spacing: 0.01em;
+  color: var(--r4);
+}
+.item.saved:not(.sel) {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px color-mix(in srgb, var(--r4) 40%, var(--line));
+}
+.save-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--r4) 6%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--r4) 30%, var(--line-soft));
+}
+.save-hint-star {
+  color: var(--r4);
+}
+.reveal-keep {
+  display: grid;
+  gap: 4px;
+}
+.reveal-keep:empty {
+  display: none;
+}
+.reveal .note.record,
+.reveal .note.saved-mark {
+  color: var(--r4);
+}
+
+/* the room: a wall with six frames */
+.room,
+.saved {
+  display: grid;
+  gap: 10px;
+}
+.room p,
+.saved p {
+  margin: 0;
+}
+.special-head {
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.saved {
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 16px;
+  padding: 18px 14px 16px;
+  /* planks */
+  background:
+    repeating-linear-gradient(0deg, transparent 0 46px, color-mix(in srgb, var(--bg-deep) 55%, transparent) 46px 48px),
+    color-mix(in srgb, var(--frame-wood, #6b4d33) 14%, var(--panel));
+  box-shadow: var(--px-border);
+}
+.frame {
+  --wood: #7b593b;
+  --wood-hi: #a57c52;
+  --wood-lo: #4a3523;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  font: inherit;
+  color: var(--text-2);
+  background: var(--panel-2);
+  /* a moulded frame in four pixel steps, and the shadow it casts on the wall */
+  box-shadow:
+    0 0 0 2px var(--bg-deep),
+    inset 0 0 0 2px var(--wood-hi),
+    inset 0 0 0 6px var(--wood),
+    inset 0 0 0 8px var(--wood-lo),
+    5px 5px 0 0 color-mix(in srgb, var(--bg-deep) 70%, transparent);
+}
+button.frame {
+  cursor: pointer;
+}
+/* the nail it hangs on */
+.frame::before {
+  content: '';
+  position: absolute;
+  top: -9px;
+  left: calc(50% - 3px);
+  width: 6px;
+  height: 6px;
+  background: var(--muted);
+  box-shadow: 0 0 0 2px var(--bg-deep);
+}
+.frame.r3 {
+  --wood: #5d4a86;
+  --wood-hi: var(--r3);
+  --wood-lo: #33284d;
+}
+.frame.r4 {
+  --wood: #b98f3c;
+  --wood-hi: #f0d68a;
+  --wood-lo: #6e531f;
+}
+.frame.r5 {
+  --wood: #c0607a;
+  --wood-hi: #f6b7c6;
+  --wood-lo: #6d2f42;
+}
+/* legendary and mythic: studs in the corners */
+.frame.r4::after,
+.frame.r5::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--wood-hi), var(--wood-hi)) 0 0 / 6px 6px no-repeat,
+    linear-gradient(var(--wood-hi), var(--wood-hi)) 100% 0 / 6px 6px no-repeat,
+    linear-gradient(var(--wood-hi), var(--wood-hi)) 0 100% / 6px 6px no-repeat,
+    linear-gradient(var(--wood-hi), var(--wood-hi)) 100% 100% / 6px 6px no-repeat;
+}
+.frame.r5::after {
+  animation: frame-gems 1.6s steps(2, end) infinite;
+}
+@keyframes frame-gems {
+  50% {
+    opacity: 0.45;
+  }
+}
+.frame-art {
+  box-shadow: inset 0 0 0 2px var(--wood-lo);
+}
+.frame.r4 .frame-art {
+  background: color-mix(in srgb, var(--r4) 9%, var(--bg-deep));
+}
+.frame.r5 .frame-art {
+  background: color-mix(in srgb, var(--r5) 10%, var(--bg-deep));
+}
+.frame-no {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  min-width: 16px;
+  padding: 3px 4px 2px;
+  text-align: center;
+  font: 400 9px/1 var(--font-px);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg-deep) 86%, transparent);
+}
+/* the brass plate under the picture */
+.frame-plate {
+  display: grid;
+  gap: 4px;
+  padding: 7px 8px 8px;
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  min-width: 0;
+}
+.frame-name {
+  font: 600 13px/1.25 var(--font-body);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.frame-weight {
+  font: 600 12px/1 var(--font-body);
+  color: var(--text);
+}
+.frame-where {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+.frame-record {
+  font: 600 11px/1.3 var(--font-body);
+  color: var(--r4);
+}
+.frame.empty {
+  --wood: var(--panel-3);
+  --wood-hi: var(--line);
+  --wood-lo: var(--line-soft);
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 190px;
+  color: var(--muted);
+  background: repeating-linear-gradient(45deg, var(--panel) 0 6px, color-mix(in srgb, var(--text) 3%, var(--panel)) 6px 12px);
+}
+.frame-hole {
+  font: 400 26px/1 var(--font-px);
+  color: var(--dim);
+}
+.frame-add {
+  padding: 6px 10px 5px;
+  font: 600 12px/1 var(--font-body);
+  color: var(--ink);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-deep);
+}
+button.frame.empty:hover .frame-add {
+  background: var(--accent-hi);
+}
+button.frame:not(.empty):hover {
+  background: var(--panel-3);
+}
+.frame.sel {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.frame.target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+  animation: frame-target 1s steps(2, end) infinite;
+}
+.frame.target:hover {
+  outline-style: solid;
+}
+@keyframes frame-target {
+  50% {
+    outline-color: var(--accent-lo);
+  }
+}
+/* just hung: it drops onto its nail */
+.frame.just-set {
+  animation: frame-hang 0.45s steps(4, end);
+}
+@keyframes frame-hang {
+  0% {
+    transform: translateY(-10px);
+    filter: brightness(1.5);
+  }
+  60% {
+    transform: translateY(2px);
+  }
+  100% {
+    transform: none;
+    filter: none;
+  }
+}
+.room-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: var(--accent-wash);
+  box-shadow: inset 0 0 0 2px var(--accent-line);
+}
+.room-pick {
+  display: grid;
+  gap: 10px;
+}
+.pick-grid {
+  max-height: 46vh;
+}
+.pick-grid .item {
+  font: inherit;
+}
+.saved-grid {
+  max-height: none;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.saved-grid .btn {
+  white-space: normal;
+  margin-top: 0;
+}
+.saved-grid .item.shown {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--r4);
+}
+.specimens .save-btn {
+  font-size: 12px;
+}
+/* by the room's own width, not the window's: beside the pond the tab is a narrow column on any screen */
+.room {
+  container-type: inline-size;
+}
+@container (max-width: 470px) {
+  .room-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 12px;
+    padding: 18px 10px 12px;
+  }
+  .frame.empty {
+    min-height: 150px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.save-btn.hot,
+  .frame.r5::after,
+  .frame.target,
+  .frame.just-set {
+    animation: none;
+  }
 }

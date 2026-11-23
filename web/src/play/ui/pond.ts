@@ -12,6 +12,7 @@ import {
   rodRepairPrice,
   rollBite,
   startCast,
+  isShowcased,
   isValuable,
   type CastTicket,
   type Hooked,
@@ -56,6 +57,7 @@ import { CHAIN, ops, refresh, refreshStandings } from '../ops';
 import { completedBy, dailySettled } from '../daily';
 import { describeGoal } from '../../game/daily';
 import { dailyBadge } from './daily';
+import { addToRoom, showRoom } from './trophyRoom';
 import { act, commit, getSave, rev } from '../state';
 import { track, trackCast, trackLanding } from '../telemetry';
 import { pearl, qualityTag, rarityTag } from './fmt';
@@ -767,8 +769,8 @@ function showCatch(l: Landing, fightLine: string | null = null): void {
   const note = (cls: string, text: string): void => void notes.push(h('div', { class: `note ${cls}`, text }));
   if (f.isSpecial) note('gold', 'Special fish! See the Trophies tab');
   if (l.newSpecies) note('gold', 'New species discovered');
-  if (l.newOverallRecord) note('gold', 'Your heaviest fish ever');
-  else if (l.newBest) note('', `Personal best for ${sp.name}`);
+  if (l.newOverallRecord) note('gold record', '★ Your heaviest fish ever');
+  else if (l.newBest) note('gold record', `★ Personal best for ${sp.name}`);
   if (l.levelUp) {
     note('gold', `Level ${l.levelUp}!`);
     celebrateLevel();
@@ -776,6 +778,68 @@ function showCatch(l: Landing, fightLine: string | null = null): void {
   for (const id of l.unlocked) note('gold', `${LOCATIONS[id].name} unlocked`);
   for (const c of completedBy(f.id)) note('gold', `Daily challenge done: ${describeGoal(c.goal)}`);
   const canQuickSell = !f.isSpecial && !isValuable(f);
+  // A catch the player may want to keep: the Save action stands out, and the Trophy Room is offered. Nothing has to
+  // be decided: Continue fishing is always the main button.
+  const notable = f.rarity >= 2 || f.isSpecial || l.newBest || l.newOverallRecord;
+  const actionsEl = h('div', { class: 'reveal-actions' });
+  const keepEl = h('div', { class: 'reveal-keep' });
+  const paint = (): void => {
+    const s = getSave();
+    const mine = s.fish.find((x) => x.id === f.id);
+    const isSaved = !!mine?.isFavorite;
+    const shown = isShowcased(s, f.id);
+    keepEl.replaceChildren(
+      ...[
+        notable && !isSaved ? h('div', { class: 'note', text: 'A catch worth keeping? Save it and no Sell button will take it.' }) : null,
+        isSaved ? h('div', { class: 'note saved-mark', text: shown ? '★ Saved and on display in your Trophy Room' : '★ Saved: protected from selling' }) : null,
+      ].filter((x) => x !== null),
+    );
+    actionsEl.replaceChildren(
+      ...[
+        canQuickSell && !isSaved
+          ? h('button', {
+              class: 'btn',
+              text: `Sell now · ${pearl(saleValue(f, Date.now()))}`,
+              attrs: { type: 'button' },
+              onclick: () => {
+                hideOverlay();
+                void ops.sellFish([f.id]);
+              },
+            })
+          : null,
+        // only a fish that is really in the keepnet can be saved (after a failed read it is not there yet)
+        mine
+          ? h('button', {
+              class: `btn save-btn${isSaved ? ' on' : notable ? ' hot' : ''}`,
+              text: isSaved ? '★ Saved' : '☆ Save fish',
+              title: isSaved ? (shown ? 'On display: take it down in the Trophy Room before removing the star' : 'Protected from selling. Tap to remove the star') : 'Keeps it out of every sale until you remove the star',
+              attrs: { type: 'button', 'aria-pressed': String(isSaved) },
+              onclick: () => {
+                ops.toggleFavorite(f.id);
+                paint();
+              },
+            })
+          : null,
+        mine && notable && !shown
+          ? h('button', {
+              class: 'btn',
+              text: 'Add to Trophy Room',
+              title: 'Hangs it in one of your six frames and saves it',
+              attrs: { type: 'button' },
+              onclick: () => {
+                if (addToRoom(f.id) === 'choose') {
+                  // the room is full: the player picks which trophy it replaces, there
+                  hideOverlay();
+                  showRoom();
+                } else paint();
+              },
+            })
+          : null,
+        h('button', { class: 'btn btn-primary', text: 'Continue fishing', attrs: { type: 'button' }, onclick: hideOverlay }),
+      ].filter((x) => x !== null),
+    );
+  };
+  paint();
   overlayEl.replaceChildren(
     h(
       'div',
@@ -789,21 +853,8 @@ function showCatch(l: Landing, fightLine: string | null = null): void {
       fightLine ? h('div', { class: 'muted small', text: fightLine }) : null,
       notes,
       h('div', { class: 'muted small', text: `Fresh catch: +${Math.round(TUNING.freshBonus * 100)}% if sold within ${TUNING.freshWindowMs / 60_000} min, ${pearl(f.sellPrice)} after` }),
-      h(
-        'div',
-        { class: 'reveal-actions' },
-        canQuickSell
-          ? h('button', {
-              class: 'btn',
-              text: `Sell now · ${pearl(saleValue(f, Date.now()))}`,
-              onclick: () => {
-                hideOverlay();
-                void ops.sellFish([f.id]);
-              },
-            })
-          : null,
-        h('button', { class: 'btn btn-primary', text: 'Keep', onclick: hideOverlay }),
-      ),
+      keepEl,
+      actionsEl,
     ),
   );
   overlayEl.classList.remove('hidden');
@@ -1026,4 +1077,14 @@ function renderControlsView(): HTMLElement[] {
 export function tickPond(): void {
   // energy may have regenerated: lets the controls refresh their "not enough energy" state
   emit();
+}
+
+// On the dev server: `fishingCard(i, { best: true })` shows the catch card of the i-th fish in the keepnet without
+// a cast, to look at what the card offers (save it, hang it, sell it).
+if (import.meta.env.DEV) {
+  (window as unknown as { fishingCard?: unknown }).fishingCard = (i = 0, o: { best?: boolean; record?: boolean } = {}): void => {
+    const s = getSave();
+    const fish = s.fish[i];
+    if (fish) showCatch({ save: s, fish, newSpecies: false, newBest: !!o.best, newOverallRecord: !!o.record, levelUp: null, unlocked: [], countedThisWeek: false });
+  };
 }

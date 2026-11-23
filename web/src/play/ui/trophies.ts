@@ -1,6 +1,10 @@
-/** Trophies: the special collectible fish, what they unlock and the single passive-bonus slot. */
+/**
+ * Trophies: the player's Trophy Room and Saved Fish (ui/trophyRoom.ts), then the special collectible fish, what
+ * they unlock and the single passive-bonus slot. The room is a display: it changes nothing about a special fish's
+ * bonus or unlock.
+ */
 import { BLEND_PRIZE, LOCATIONS, SPECIALS, SPECIES } from '../../game/content';
-import { saleValue } from '../../game/actions';
+import { isShowcased, saleValue } from '../../game/actions';
 import { isUnlocked } from '../../game/progress';
 import { RARITY_CLASS } from '../../i18n';
 import { fmtWeight, h, mount, sigOf } from '../../ui/dom';
@@ -11,13 +15,14 @@ import { levelOf } from '../../game/economy';
 import { bottleOn, world } from '../chain';
 import { getSave, rev } from '../state';
 import { ago, pearl, qualityTag, rarityTag } from './fmt';
+import { renderRoom, roomSig } from './trophyRoom';
 
 let confirming: string | null = null;
 
 export function initTrophies(host: HTMLElement): () => void {
   const rerender = mount(
     host,
-    () => sigOf(rev(), confirming, world.bottle?.left, world.bottle?.today, world.bottle?.chancePpm),
+    () => sigOf(rev(), confirming, roomSig(), world.bottle?.left, world.bottle?.today, world.bottle?.chancePpm),
     () => render(rerender),
   );
   return rerender;
@@ -39,6 +44,8 @@ function render(rerender: () => void): HTMLElement[] {
   // on the contracts the numbers are the contract's; the local game has no pool and no daily limit
   const bottle: Bottle = CHAIN && world.bottle ? world.bottle : { amount: BLEND_PRIZE.amount, minLevel: BLEND_PRIZE.minLevel, maxWins: BLEND_PRIZE.maxWins, dailyMax: 0, today: 0, left: null };
   const out: HTMLElement[] = [
+    ...renderRoom(rerender),
+    h('div', { class: 'dex-head special-head' }, h('h3', { text: 'Special Fish' })),
     h(
       'p',
       { class: 'muted small' },
@@ -88,21 +95,34 @@ function render(rerender: () => void): HTMLElement[] {
                     h('span', { text: fmtWeight(f.weight) }),
                     qualityTag(f.quality),
                     h('span', { class: 'muted small', text: `${LOCATIONS[f.locationId].name} · ${ago(f.caughtAt)}` }),
+                    isShowcased(s, f.id) ? h('span', { class: 'saved-mark', text: 'On display' }) : null,
                     h('div', { class: 'spacer' }),
                     h('button', {
-                      class: `btn btn-sm${confirming === f.id ? ' btn-danger' : ' btn-ghost'}`,
-                      text: confirming === f.id ? (held.length === 1 ? 'Confirm: bonus will turn off' : 'Confirm sale') : `Sell · ${pearl(saleValue(f, Date.now()))}`,
+                      class: `btn btn-sm btn-ghost save-btn${f.isFavorite ? ' on' : ''}`,
+                      text: f.isFavorite ? '★ Saved' : '☆ Save',
+                      title: f.isFavorite ? 'Saved: protected from selling. Tap to remove the star' : 'Save it: no Sell button will take it',
+                      attrs: { type: 'button', 'aria-pressed': String(f.isFavorite) },
                       onclick: () => {
-                        if (confirming !== f.id) {
-                          confirming = f.id;
-                          rerender();
-                          return;
-                        }
                         confirming = null;
-                        rerender();
-                        void ops.sellFish([f.id]).then((earned) => earned !== undefined && toast(`Sold ${sp.name} for ${pearl(earned)} PEARL`, 'ok'));
+                        ops.toggleFavorite(f.id);
                       },
                     }),
+                    f.isFavorite
+                      ? h('span', { class: 'muted small', text: 'not for sale' })
+                      : h('button', {
+                          class: `btn btn-sm${confirming === f.id ? ' btn-danger' : ' btn-ghost'}`,
+                          text: confirming === f.id ? (held.length === 1 ? 'Confirm: bonus will turn off' : 'Confirm sale') : `Sell · ${pearl(saleValue(f, Date.now()))}`,
+                          onclick: () => {
+                            if (confirming !== f.id) {
+                              confirming = f.id;
+                              rerender();
+                              return;
+                            }
+                            confirming = null;
+                            rerender();
+                            void ops.sellFish([f.id]).then((earned) => earned !== undefined && toast(`Sold ${sp.name} for ${pearl(earned)} PEARL`, 'ok'));
+                          },
+                        }),
                   ),
                 ),
               )

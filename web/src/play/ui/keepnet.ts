@@ -1,5 +1,8 @@
-/** Keepnet: the fish you hold. Sort, filter, star favourites, sell one, several, or everything eligible. */
-import { bulkSellable, isFresh, isValuable, saleValue } from '../../game/actions';
+/**
+ * Keepnet: the fish you hold. Sort, filter, save the ones that matter (the star: no Sell button takes a saved fish),
+ * sell one, several, or everything that is not protected.
+ */
+import { bulkSellable, isFresh, isShowcased, isValuable, saleValue } from '../../game/actions';
 import { LOCATIONS, SPECIES } from '../../game/content';
 import type { FishInstance } from '../../game/types';
 import { RARITY_CLASS, RARITY_NAMES } from '../../i18n';
@@ -8,6 +11,7 @@ import { dropdown } from '../../ui/dropdown';
 import { toast } from '../../ui/toast';
 import { fishArt } from '../fishSprite';
 import { ops } from '../ops';
+import { showRoom } from './trophyRoom';
 import { getSave, rev } from '../state';
 import { ago, pearl, qualityTag, rarityTag } from './fmt';
 
@@ -115,12 +119,22 @@ function render(rerender: () => void): HTMLElement[] {
     h('button', {
       class: `btn btn-sm${armed('all', eligible) ? ' btn-danger' : ''}`,
       disabled: eligible.length === 0,
-      title: 'Sells every fish shown here except favourites and special fish',
+      title: 'Sells every fish shown here except saved fish (★) and special fish',
       text: armed('all', eligible) ? `Confirm: ${valuableIn(eligible)} valuable fish` : `Sell all (${eligible.length}) · ${pearl(eligibleValue)}`,
       onclick: () => sell(eligible, 'all'),
     }),
   );
   if (s.fish.length === 0) return [toolbar, h('p', { class: 'empty', text: 'Your keepnet is empty. Go cast a line!' })];
+  const savedCount = s.fish.filter((f) => f.isFavorite).length;
+  // said in words, next to the buttons it changes: on a phone there is no hover to explain a star
+  const about = h(
+    'p',
+    { class: 'save-hint' },
+    h('span', { class: 'save-hint-star', attrs: { 'aria-hidden': 'true' }, text: '★' }),
+    h('span', null, 'Save your favorite catches to protect them from selling.', savedCount ? ` ${savedCount} saved: Sell all skips ${savedCount === 1 ? 'it' : 'them'}.` : ' Tap ☆ Save on a fish.'),
+    h('div', { class: 'spacer' }),
+    h('button', { class: 'link', text: savedCount ? `Saved fish and Trophy Room (${savedCount}) →` : 'Trophy Room →', attrs: { type: 'button' }, onclick: showRoom }),
+  );
 
   const grid = h(
     'div',
@@ -129,14 +143,20 @@ function render(rerender: () => void): HTMLElement[] {
       const sp = SPECIES[f.speciesId];
       const can = bulkSellable(f);
       const on = selected.has(f.id);
+      const displayed = isShowcased(s, f.id);
+      const why = f.isFavorite ? (displayed ? 'On display in your Trophy Room: protected from selling' : 'Saved: protected from selling') : f.isSpecial ? 'Special fish: sold one at a time from the Trophies tab' : '';
       const card = h(
         'div',
         {
-          class: `item pick ${on ? 'sel' : ''} ${RARITY_CLASS[f.rarity]}${can ? '' : ' kept'}`,
-          title: `${LOCATIONS[f.locationId].name} · ${ago(f.caughtAt)} · ${f.tournamentScore} pts${can ? '' : f.isSpecial ? ' · special fish: sell it from the Trophies tab' : ' · favourite: protected from selling'}`,
-          attrs: { role: 'checkbox', 'aria-checked': String(on), tabindex: '0', 'aria-label': `${sp.name}, ${fmtWeight(f.weight)}, ${pearl(worth(f))} PEARL` },
+          class: `item pick ${on ? 'sel' : ''} ${RARITY_CLASS[f.rarity]}${can ? '' : ' kept'}${f.isFavorite ? ' saved' : ''}`,
+          title: `${LOCATIONS[f.locationId].name} · ${ago(f.caughtAt)} · ${f.tournamentScore} pts${why ? ` · ${why}` : ''}`,
+          attrs: { role: 'checkbox', 'aria-checked': String(on), 'aria-disabled': String(!can), tabindex: '0', 'aria-label': `${sp.name}, ${fmtWeight(f.weight)}, ${pearl(worth(f))} PEARL${why ? `. ${why}` : ''}` },
           onclick: () => {
-            if (!can) return;
+            if (!can) {
+              // a tap on a protected fish says why nothing happened
+              toast(f.isFavorite ? (displayed ? 'This fish hangs in your Trophy Room. Take it down and remove the star to sell it.' : 'This fish is saved. Tap ★ Saved to remove the star, then it can be sold.') : 'Special fish are sold one at a time, from the Trophies tab.', 'info');
+              return;
+            }
             if (on) selected.delete(f.id);
             else selected.add(f.id);
             confirming = null;
@@ -145,21 +165,20 @@ function render(rerender: () => void): HTMLElement[] {
         },
         fishArt(f.speciesId),
         h('span', { class: 'item-name', text: sp.name }),
-        h('span', { class: 'item-tags' }, rarityTag(f.rarity), qualityTag(f.quality)),
+        h('span', { class: 'item-tags' }, rarityTag(f.rarity), qualityTag(f.quality), f.isSpecial ? h('span', { class: 'badge', text: 'Special' }) : null),
         h('span', { class: 'item-meta' }, h('span', { text: fmtWeight(f.weight) }), h('span', { class: 'pearl', text: `${pearl(worth(f))} P${isFresh(f, now) ? ' · fresh' : ''}`, title: isFresh(f, now) ? `Fresh catch: +20% for 10 minutes after landing, then ${pearl(f.sellPrice)}` : '' })),
-        f.isSpecial
-          ? h('span', { class: 'star special', text: '◆', title: 'Special fish' })
-          : h('button', {
-              class: `star${f.isFavorite ? ' on' : ''}`,
-              text: f.isFavorite ? '★' : '☆',
-              title: f.isFavorite ? 'Favourite: protected from selling. Click to remove' : 'Mark as favourite (protects it from selling)',
-              attrs: { 'aria-pressed': String(f.isFavorite), 'aria-label': 'Favourite' },
-              onclick: (e) => {
-                e.stopPropagation();
-                selected.delete(f.id);
-                void ops.toggleFavorite(f.id);
-              },
-            }),
+        f.isFavorite ? h('span', { class: 'saved-mark', text: displayed ? 'In Trophy Room · not for sale' : 'Protected from selling' }) : null,
+        h('button', {
+          class: `save-btn on-art${f.isFavorite ? ' on' : ''}`,
+          text: f.isFavorite ? '★ Saved' : '☆ Save',
+          title: f.isFavorite ? (displayed ? 'On display in your Trophy Room. Take it down there before removing the star' : 'Saved: protected from selling. Tap to remove the star') : 'Save this fish: no Sell button will take it',
+          attrs: { type: 'button', 'aria-pressed': String(f.isFavorite), 'aria-label': f.isFavorite ? `${sp.name}: saved, protected from selling. Remove the star` : `Save ${sp.name}: protect it from selling` },
+          onclick: (e) => {
+            e.stopPropagation();
+            selected.delete(f.id);
+            ops.toggleFavorite(f.id);
+          },
+        }),
         on ? h('span', { class: 'check', text: '✓' }) : null,
       );
       card.addEventListener('keydown', (e) => {
@@ -171,5 +190,5 @@ function render(rerender: () => void): HTMLElement[] {
       return card;
     }),
   );
-  return [toolbar, actions, shown.length ? grid : h('p', { class: 'empty', text: 'No fish match these filters.' })];
+  return [toolbar, actions, about, shown.length ? grid : h('p', { class: 'empty', text: 'No fish match these filters.' })];
 }
