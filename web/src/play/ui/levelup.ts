@@ -37,6 +37,12 @@ export function celebrateLevel(): void {
   });
 }
 
+/** Square confetti thrown from a box on the page. Does nothing for people who asked for less motion. */
+export function confetti(box: DOMRect, count: number, power: number): void {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  burst(box, count, power);
+}
+
 function burst(box: DOMRect, count: number, power: number): void {
   const layer = document.createElement('div');
   layer.className = 'lvl-burst';

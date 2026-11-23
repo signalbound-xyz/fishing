@@ -182,6 +182,8 @@ Looked at and dropped: a recipe of the day (handing in the fish named that day).
 5. PEARL is burned on rods (`buyRod`), lures (`buyLure`), repairs and energy refills (each further refill on the same day costs ×2).
 6. Progress is onchain: XP and level, the species encyclopedia, permanent location unlocks, personal records, the ten best catches of each week, and achievements that pay PEARL once.
 
+Location mastery (three tiers per water) and the three daily challenges are computed by the client from this state and from the game's `Caught` events. They are badges: the contracts store nothing for them and pay nothing. See [web/DAILY_CHALLENGES.md](web/DAILY_CHALLENGES.md).
+
 What the contract decides, the client cannot. Once a cast's block exists its outcome is fixed and public, so the client computes it, plays the bite, the hook and the fight on it, and settles afterwards: skill there changes how soon you land the fish, never which fish it is. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 Energy: max 20, regenerates 1 every 30 minutes on the contracts (`GameSetup.defaultConfig`, set on a deployed game by `script/Economy.s.sol`) and 1 every minute in the local game, which has nothing at stake. If a cast is not reeled in within 256 blocks, the fish gets away.

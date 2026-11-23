@@ -3373,3 +3373,211 @@ dialog.confirm::backdrop {
 .tk-card:not([role]):hover {
   background: var(--panel);
 }
+
+/* ------------------------------------------------------------ daily challenges */
+.tab.tab-done {
+  color: var(--ok);
+}
+.daily-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--text-2);
+  font: 600 13px/1.2 var(--font-body);
+  text-align: left;
+  cursor: pointer;
+}
+.daily-strip:hover {
+  background: var(--panel-3);
+  color: var(--text);
+}
+.daily-strip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.daily-strip-k {
+  flex: 1;
+}
+.daily-strip-v {
+  color: var(--accent-hi);
+}
+.daily-strip.complete {
+  box-shadow: inset 0 0 0 1px var(--ok);
+}
+.daily-strip.complete .daily-strip-v {
+  color: var(--ok);
+}
+.daily-strip-go {
+  color: var(--muted);
+}
+.daily-empty {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  padding: 16px 12px;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.daily-empty p {
+  margin: 0;
+}
+.daily-sum {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  box-shadow: var(--px-border);
+}
+.daily-sum.complete {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--ok);
+}
+.daily-sum-text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.daily-pips {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.daily-pips .pip {
+  width: 14px;
+  height: 14px;
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 2px var(--line);
+}
+.daily-pips .pip.on {
+  background: var(--ok);
+  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--ok) 65%, #000);
+}
+.daily-streak {
+  font: 400 12px/1.2 var(--font-px);
+  color: var(--r4);
+}
+.daily-cards {
+  display: grid;
+  gap: 10px;
+}
+.daily-card {
+  position: relative;
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+  padding: 12px;
+  background: var(--panel-2);
+  box-shadow: var(--px-border);
+}
+.daily-card.done {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--ok);
+}
+.daily-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 20px;
+}
+.daily-tier {
+  font: 600 11px/1 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 6px 3px;
+  color: var(--ink);
+}
+.daily-tier.tier-easy {
+  background: var(--r1);
+}
+.daily-tier.tier-medium {
+  background: var(--r2);
+}
+.daily-tier.tier-hard {
+  background: var(--r3);
+}
+.daily-stamp {
+  font: 400 11px/1 var(--font-px);
+  text-transform: uppercase;
+  padding: 4px 6px;
+  color: var(--ok);
+  box-shadow: inset 0 0 0 2px var(--ok);
+  transform: rotate(-4deg);
+}
+.daily-goal {
+  font: 600 15px/1.3 var(--font-body);
+  color: var(--text);
+}
+.daily-card.done .daily-goal {
+  color: var(--text-2);
+}
+.daily-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+.daily-progress .segbar {
+  flex: 1;
+  max-width: 220px;
+}
+.segbar.daily-bar .seg {
+  height: 8px;
+}
+.segbar.daily-bar .seg.on {
+  background: var(--accent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 70%, #000);
+}
+.daily-card.done .segbar.daily-bar .seg.on {
+  background: var(--ok);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--ok) 65%, #000);
+}
+.daily-count {
+  font: 400 12px/1 var(--font-px);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+/* a challenge just completed: the stamp lands and the bar blinks, in steps like everything else here */
+.daily-card.just-done .daily-stamp {
+  animation: daily-stamp 0.5s steps(5, end) both;
+}
+.daily-card.just-done .segbar.daily-bar {
+  animation: daily-blink 0.9s steps(1, end) both;
+}
+@keyframes daily-stamp {
+  0% {
+    transform: rotate(-4deg) scale(2.2);
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(-4deg) scale(1);
+    opacity: 1;
+  }
+}
+@keyframes daily-blink {
+  0%,
+  40%,
+  80% {
+    filter: brightness(1.8);
+  }
+  20%,
+  60%,
+  100% {
+    filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .daily-card.just-done .daily-stamp,
+  .daily-card.just-done .segbar.daily-bar {
+    animation: none;
+  }
+}

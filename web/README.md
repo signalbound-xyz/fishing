@@ -28,6 +28,7 @@ pnpm dev          # http://localhost:5180
 pnpm test         # unit tests of the game rules (vitest)
 pnpm sim          # balance simulation, rewrites BALANCE.md
 pnpm sim:audit    # balance audit and experiments, rewrites BALANCE_AUDIT.md
+pnpm sim:daily    # what a day's three challenges cost, rewrites the table in DAILY_CHALLENGES.md
 ```
 
 ## Local game
@@ -50,6 +51,11 @@ buy tackle → rarer fish, new waters.
   nor its bonus. The contracts have no such purchase yet, so on the contracts the offer is not shown.
 - **Weekly cup**: the ten best catches of the week. Weeks roll over Thursday 00:00 UTC, the same as the
   contract's `currentWeek()`. Opponents are generated and labelled DEMO; no rank rewards are paid.
+- **Location mastery**: three tiers per water (Explorer, Experienced Angler, Master), read from the encyclopedia
+  and shown in the Collection tab. **Daily challenges**: three a day (easy, medium, hard), the same all day, new
+  at 00:00 UTC, in the Daily tab and as a strip under the cast button. Both are badges only: no PEARL, no energy,
+  no contract change. Rules, where progress comes from in each mode, what a day costs and the limits:
+  [DAILY_CHALLENGES.md](DAILY_CHALLENGES.md).
 - Numbers and the reasoning behind them: [BALANCE.md](BALANCE.md). The audit of the current balance, the
   experiments with other numbers and the endgame proposal: [BALANCE_REVIEW.md](BALANCE_REVIEW.md), on top of the
   generated tables in [BALANCE_AUDIT.md](BALANCE_AUDIT.md).
@@ -84,6 +90,7 @@ nothing in the browser decides a catch, a balance or an unlock; the only client-
 | `pnpm test`      | unit tests of the game rules                                                                  |
 | `pnpm sim`       | balance simulation (100k casts per loadout), writes `BALANCE.md`                              |
 | `pnpm sim:audit` | balance audit and experiments (about two minutes), writes `BALANCE_AUDIT.md` and `sim/out/loadouts.csv` |
+| `pnpm sim:daily` | plays the daily challenge sets with a model player, writes the cost table in `DAILY_CHALLENGES.md` |
 
 After changing the contracts: `forge build` (and redeploy if needed), then `pnpm sync`.
 If `contracts/out` is missing, `sync` keeps the already generated files.
@@ -142,6 +149,9 @@ src/game/              the rules, pure TypeScript, no DOM and no storage
   chainOutcome.ts      what a pending cast will be, computed as the contract computes it
   tournament.ts        score, week boundaries, top ten, demo standings
   progress.ts          unlocks (permanent vs ownership), encyclopedia, achievements
+  mastery.ts           location mastery: three tiers per water as a pure function of the encyclopedia
+  daily.ts             daily challenges: the rules, the day's set (deterministic), progress, the local day
+  dailyLog.ts          a player's day read from the game's events: folding, the day's first block, the streak
   actions.ts           every state change as (save, input) → new save
   save.ts              save shape, versioned migrations
   game.test.ts         unit tests
@@ -152,12 +162,14 @@ src/play/              the local game's shell
   state.ts             the current Save (localStorage in local mode, a view of chain state otherwise)
   fishSprite.ts        pixel fish drawn from shape parameters
   telemetry.ts         gameplay telemetry in the browser: the recorder over localStorage, what the UI reports
-  ui/*.ts              pond, keepnet, collection, trophies, ranks, header, prize (the bottle reveal), stats
+  daily.ts             daily challenges in the browser: the chain reader, its cache, what the UI shows
+  ui/*.ts              pond, keepnet, daily, collection (with mastery), trophies, ranks, header, prize (the bottle reveal), stats
 src/telemetry/         telemetry format, recorder and summary: pure, no DOM
 sim/balance.sim.ts     balance simulation (BALANCE.md)
 sim/lab.ts             the balance lab: model players, rule sets, careers day by day
 sim/scenarios.ts       what the audit tries: energy rules, reel curves, cups, mastery tiers
 sim/audit.sim.ts       the audit (BALANCE_AUDIT.md, sim/out/loadouts.csv)
+sim/daily.ts           a model player fishing a day's three challenges; sim/daily.sim.ts writes the table
 src/tx.ts, errors.ts   simulate → send through Fluent Connect → receipt, readable revert messages
 src/scene.ts           canvas water animation (both modes)
 src/fluent.tsx         Fluent Connect widget (React island)

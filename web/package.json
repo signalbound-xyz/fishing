@@ -12,6 +12,7 @@
     "test": "vitest run",
     "sim": "vitest run --config vitest.sim.config.ts sim/balance.sim.ts",
     "sim:audit": "vitest run --config vitest.sim.config.ts sim/audit.sim.ts",
+    "sim:daily": "vitest run --config vitest.sim.config.ts sim/daily.sim.ts",
     "live": "vitest run --config vitest.live.config.ts"
   },
   "dependencies": {

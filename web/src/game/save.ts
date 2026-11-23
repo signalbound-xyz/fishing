@@ -35,6 +35,7 @@ export function freshSave(now: number): Save {
     weeks: {},
     claimed: [],
     stats: { casts: 0, catches: 0, escaped: 0, sold: 0, earned: 0 },
+    daily: { day: 0, set: null, catches: [], streak: { day: 0, count: 0 } },
   };
 }
 
@@ -83,7 +84,7 @@ export function loadSave(json: string | null, now: number, migrations = MIGRATIO
   // Fill anything missing from the fresh shape, so a field added without a migration cannot crash the game.
   const base = freshSave(now) as unknown as Raw;
   const merged: Raw = { ...base, ...data, version: current };
-  for (const k of ['equipped', 'records', 'stats', 'refills']) {
+  for (const k of ['equipped', 'records', 'stats', 'refills', 'daily']) {
     merged[k] = { ...(base[k] as Raw), ...(isObj(data[k]) ? (data[k] as Raw) : {}) };
   }
   return { save: merged as unknown as Save, status: from === current ? 'ok' : 'migrated' };

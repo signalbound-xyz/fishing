@@ -8,14 +8,16 @@ import { h } from '../ui/dom';
 import { toast } from '../ui/toast';
 import { initCollection } from './ui/collection';
 import { initCup, tickCup } from './ui/cup';
+import { dailyBadge, initDaily } from './ui/daily';
 import { initLocalHeader, tickLocalHeader } from './ui/header';
 import { initKeepnet } from './ui/keepnet';
-import { initPond, tickPond } from './ui/pond';
+import { initPond, pondBusy, tickPond } from './ui/pond';
 import { initRanks, tickRanks } from './ui/ranks';
 import { initStats } from './ui/stats';
 import { initTrophies } from './ui/trophies';
 import { catalogMismatches } from './chain';
 import { CHAIN, refresh, refreshStandings } from './ops';
+import { tickDaily } from './daily';
 import { replaceSave } from './state';
 import { freshSave } from '../game/save';
 
@@ -25,15 +27,17 @@ const headerEl = h('header', { class: 'header' });
 const sceneEl = h('div', { class: 'scene' });
 const controlsEl = h('div', { class: 'controls card' });
 
-type Tab = 'inv' | 'dex' | 'trophy' | 'ranks';
+type Tab = 'inv' | 'daily' | 'dex' | 'trophy' | 'ranks';
 const TABS: [Tab, string][] = [
   ['inv', 'Keepnet'],
+  ['daily', 'Daily'],
   ['dex', 'Collection'],
   ['trophy', 'Trophies'],
   ['ranks', 'Ranks'],
 ];
 const panels: Record<Tab, HTMLElement> = {
   inv: h('div', { class: 'panel' }),
+  daily: h('div', { class: 'panel' }),
   dex: h('div', { class: 'panel' }),
   trophy: h('div', { class: 'panel' }),
   ranks: h('div', { class: 'panel' }),
@@ -48,6 +52,23 @@ let tab: Tab = (() => {
   }
 })();
 const tabBtns = TABS.map(([k, label]) => h('button', { class: 'tab', text: label, attrs: { role: 'tab', 'data-tab': k }, onclick: () => selectTab(k) }));
+/** The Daily tab carries the day's count, so it can be read without opening it. */
+const dailyTab = tabBtns[TABS.findIndex(([k]) => k === 'daily')];
+let dailyTabText = '';
+function paintDailyTab(): void {
+  const b = dailyBadge();
+  const text = b ? `Daily ${b.text}` : 'Daily';
+  if (text !== dailyTabText) dailyTab.textContent = dailyTabText = text;
+  dailyTab.classList.toggle('tab-done', !!b?.complete);
+}
+// Another part of the page asks for a tab (the daily strip under the Cast button): open it and bring it into view,
+// since on a phone the tabs sit under the controls.
+window.addEventListener('fishing:open-tab', (e) => {
+  const k = (e as CustomEvent<string>).detail as Tab;
+  if (!TABS.some(([t]) => t === k)) return;
+  selectTab(k);
+  tabBtns[0].parentElement?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+});
 function selectTab(k: Tab): void {
   tab = k;
   try {
@@ -56,6 +77,10 @@ function selectTab(k: Tab): void {
     /* a remembered tab is a convenience only */
   }
   tabBtns.forEach((b) => b.classList.toggle('active', b.dataset.tab === k));
+  // five tabs do not fit a narrow column: keep the chosen one in sight
+  const btn = tabBtns.find((b) => b.dataset.tab === k);
+  const nav = btn?.parentElement;
+  if (btn && nav) nav.scrollLeft = btn.offsetLeft - (nav.clientWidth - btn.offsetWidth) / 2;
   (Object.keys(panels) as Tab[]).forEach((p) => panels[p].classList.toggle('hidden', p !== k));
 }
 
@@ -135,6 +160,8 @@ const renders = [
   }),
   initPond(sceneEl, controlsEl),
   initKeepnet(panels.inv),
+  initDaily(panels.daily, pondBusy),
+  paintDailyTab,
   initCollection(panels.dex),
   initTrophies(panels.trophy),
   initRanks(panels.ranks),
@@ -145,6 +172,8 @@ const renders = [
 subscribe(() => renders.forEach((r) => r()));
 route();
 setInterval(() => {
+  // a new UTC day: the local game turns the page itself, on the contracts the player's state is read again
+  if (tickDaily()) void refresh();
   tickLocalHeader();
   tickRanks();
   tickPond();

@@ -6,12 +6,14 @@
 import { LOCAL_GAME } from '../config';
 import * as A from '../game/actions';
 import { LOCATIONS, SPECIALS } from '../game/content';
+import { profileOf } from '../game/daily';
 import { achievements } from '../game/progress';
 import type { Save } from '../game/types';
 import { emit, state } from '../store';
 import { LURES, RODS } from '../tackle/catalog';
 import { buyPearlOnChain, loadChainSave, loadStandings, rememberLocation, toggleFavouriteLocal, tx, type GameCall } from './chain';
 import { toast } from '../ui/toast';
+import { syncDaily } from './daily';
 import { act, apply, getSave, replaceSave } from './state';
 import { track } from './telemetry';
 
@@ -32,6 +34,8 @@ export function refresh(): Promise<void> {
       const s = await loadChainSave();
       readFor = who;
       if (s) replaceSave(s);
+      // the day's challenges are read from the chain's events, after the state they are compared with
+      if (s && who) void syncDaily(who, profileOf(s));
     } catch (e) {
       console.warn('refresh failed', e);
       // the next refresh tries again; meanwhile the page shows what it has instead of waiting forever

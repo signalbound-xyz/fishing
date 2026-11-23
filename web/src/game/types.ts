@@ -106,6 +106,56 @@ export interface WeekEntry {
   at: number;
 }
 
+/** A landed fish as the daily challenges see it. `id` is unique per fish (the NFT id on the contracts), so one catch is never counted twice. */
+export interface DayCatch {
+  id: string;
+  speciesId: number;
+  /** Grams. */
+  weight: number;
+  locationId: number;
+}
+
+/** What a daily challenge asks for. `loc` narrows it to one water; without it any water counts. */
+export type DailyGoal =
+  | { kind: 'catch'; count: number; loc?: number }
+  | { kind: 'species'; speciesId: number; count: number }
+  | { kind: 'distinct'; count: number; loc?: number }
+  | { kind: 'rarity'; min: Rarity; count: number }
+  | { kind: 'weight'; grams: number; loc?: number };
+
+export type DailyTier = 'easy' | 'medium' | 'hard';
+
+export interface DailyChallenge {
+  /** Stable and versioned: the same goal has the same id on every device, and a changed rule set changes the prefix. */
+  id: string;
+  tier: DailyTier;
+  goal: DailyGoal;
+  /** The water it was sized for: a hint for the player, and where the estimate below holds. */
+  at: number;
+  /** Energy it is expected to take there, with the rod it was sized for and no lure. */
+  energy: number;
+  /** The rod it was sized for, when that is not the starter rod. */
+  rod?: string;
+}
+
+export interface DailySet {
+  version: number;
+  /** UTC day number: floor(ms / 86,400,000). */
+  day: number;
+  challenges: DailyChallenge[];
+}
+
+/** The local game's daily state. On the contracts none of this is stored: it is read from the day's events. */
+export interface DailyState {
+  /** The UTC day `set` and `catches` belong to. */
+  day: number;
+  /** The day's challenges, fixed when the day is first seen so that they do not change under the player. */
+  set: DailySet | null;
+  catches: DayCatch[];
+  /** The last day on which all three were completed, and how many days in a row that made. */
+  streak: { day: number; count: number };
+}
+
 export interface Save {
   version: number;
   seq: number;
@@ -141,4 +191,6 @@ export interface Save {
   /** Claimed achievement ids (rewards are granted once). */
   claimed: string[];
   stats: { casts: number; catches: number; escaped: number; sold: number; earned: number };
+  /** Daily challenges of the local game. */
+  daily: DailyState;
 }

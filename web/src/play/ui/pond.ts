@@ -53,6 +53,9 @@ import { toast } from '../../ui/toast';
 import { fishArt } from '../fishSprite';
 import { blocksUntilExpiry, outcomeOf, previewCast, tx, waitPastBlock, world } from '../chain';
 import { CHAIN, ops, refresh, refreshStandings } from '../ops';
+import { completedBy, dailySettled } from '../daily';
+import { describeGoal } from '../../game/daily';
+import { dailyBadge } from './daily';
 import { act, commit, getSave, rev } from '../state';
 import { track, trackCast, trackLanding } from '../telemetry';
 import { pearl, qualityTag, rarityTag } from './fmt';
@@ -98,7 +101,7 @@ export function initPond(sceneHost: HTMLElement, controlsHost: HTMLElement): () 
   window.addEventListener('pointerup', () => (holding = false));
   window.addEventListener('blur', () => (holding = false));
 
-  const renderControls = mount(controlsHost, () => sigOf(rev(), phase, viewLoc, energyNow(getSave(), Date.now()), state.wallet?.address), renderControlsView);
+  const renderControls = mount(controlsHost, () => sigOf(rev(), phase, viewLoc, energyNow(getSave(), Date.now()), state.wallet?.address, dailyBadge()), renderControlsView);
   return () => {
     renderControls();
     resumeChainCast();
@@ -396,6 +399,8 @@ async function settleOnChain(): Promise<void> {
   }
   const out = outcomeOf(receipt, me);
   await refresh();
+  // the day's challenges are read from the same block: a moment for them, so the catch card can say what it completed
+  if (out?.kind === 'caught') await dailySettled();
   void refreshStandings();
   const guess = predicted;
   predicted = null;
@@ -482,6 +487,7 @@ async function legacyHookOnChain(): Promise<void> {
   }
   const out = outcomeOf(receipt, me);
   await refresh();
+  if (out?.kind === 'caught') await dailySettled();
   void refreshStandings();
   if (!out || out.kind === 'missed' || out.kind === 'expired') {
     scene.setPhase('missed');
@@ -768,6 +774,7 @@ function showCatch(l: Landing, fightLine: string | null = null): void {
     celebrateLevel();
   }
   for (const id of l.unlocked) note('gold', `${LOCATIONS[id].name} unlocked`);
+  for (const c of completedBy(f.id)) note('gold', `Daily challenge done: ${describeGoal(c.goal)}`);
   const canQuickSell = !f.isSpecial && !isValuable(f);
   overlayEl.replaceChildren(
     h(
@@ -879,6 +886,25 @@ function renderControlsView(): HTMLElement[] {
           ),
     ),
   );
+
+  // the day's challenges at a glance; the cards are in the Daily tab
+  const daily = guest ? null : dailyBadge();
+  if (daily) {
+    out.push(
+      h(
+        'button',
+        {
+          class: `daily-strip${daily.complete ? ' complete' : ''}`,
+          title: 'Open today’s challenges',
+          attrs: { type: 'button' },
+          onclick: () => window.dispatchEvent(new CustomEvent('fishing:open-tab', { detail: 'daily' })),
+        },
+        h('span', { class: 'daily-strip-k', text: 'Daily challenges' }),
+        h('span', { class: 'daily-strip-v', text: daily.complete ? 'all done' : `${daily.text} done` }),
+        h('span', { class: 'daily-strip-go', text: '→' }),
+      ),
+    );
+  }
 
   out.push(
     h(

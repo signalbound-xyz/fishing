@@ -5,6 +5,7 @@
  */
 import { LURES, RODS, lureById, rodById } from '../tackle/catalog';
 import { BLEND_PRIZE, LOCATIONS, PEARL_PER_BLEND, SPECIES, TUNING, special } from './content';
+import { LOCAL_PLAYER, freshDaily, profileOf, recordCatch } from './daily';
 import { fishPrice, levelOf, refillCost, repairCost, xpForCatch } from './economy';
 import { totals, type Totals } from './equipment';
 import { pickSpecies, rollSpecial, rollWeight, speciesOdds } from './generate';
@@ -270,6 +271,8 @@ export function landFish(s: Save, t: CastTicket, hooked: Hooked, quality: Qualit
     },
     weeks: { ...s.weeks, [week]: weekList },
     stats: { ...s.stats, catches: s.stats.catches + 1 },
+    // the day's challenges are drawn from what the player had before this fish, should it be the day's first
+    daily: recordCatch(s.daily ?? freshDaily(), { id: fish.id, speciesId: species.id, weight: fish.weight, locationId: t.locationId }, now, LOCAL_PLAYER, profileOf(s)),
   };
   // the first special found takes the empty bonus slot
   if (species.special && !n.activeSpecial) n.activeSpecial = species.special;
