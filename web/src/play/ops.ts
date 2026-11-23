@@ -70,7 +70,7 @@ const lureIndex = (id: string): number => LURES.findIndex((l) => l.id === id);
 const local = (fn: (s: Save) => Save): Promise<boolean> => Promise.resolve(apply(fn));
 
 /**
- * A change to what the player saved or displays. The same rules in both modes (game/actions.ts); what differs is
+ * A change to what the player saved. The same rules in both modes (game/actions.ts); what differs is
  * where the result is kept: the local save, or this browser's preferences for the signed-in account. Nothing is
  * sent to the chain. A refusal becomes a toast and changes nothing.
  */
@@ -171,22 +171,11 @@ export const ops = {
     return earned;
   },
 
-  /** The star. A client-side convenience in both modes: it only guards the game's Sell buttons. */
-  toggleFavorite: (id: string): boolean => collect((s) => A.toggleFavorite(s, id)) !== undefined,
-
   /**
-   * Hangs a fish in the Trophy Room (and saves it): in the first empty frame, or in `slot`, replacing what hangs
-   * there. Resolves to where it went, or undefined when it did not (the room is full and no slot was named).
+   * The star: saves a fish into the Trophy Room, or takes it out. A client-side convenience in both modes: it only
+   * guards the game's Sell buttons.
    */
-  showcaseFish(id: string, slot?: number): { slot: number; replaced: string | null } | undefined {
-    let hung: A.Hung | undefined;
-    const done = collect((s) => (hung = A.showcaseFish(s, id, slot)).save);
-    return done && hung ? { slot: hung.slot, replaced: hung.replaced } : undefined;
-  },
-
-  unshowcaseFish: (id: string): boolean => collect((s) => A.unshowcaseFish(s, id)) !== undefined,
-
-  moveTrophy: (from: number, to: number): boolean => collect((s) => A.moveTrophy(s, from, to)) !== undefined,
+  toggleFavorite: (id: string): boolean => collect((s) => A.toggleFavorite(s, id)) !== undefined,
 
   setActiveSpecial: (id: string | null): Promise<boolean> =>
     CHAIN

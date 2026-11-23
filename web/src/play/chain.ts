@@ -11,7 +11,7 @@ import { resolveCast, type CastOutcome, type ChainCatalog } from '../game/chainO
 import { LOCATIONS, QUALITIES, SPECIALS, SPECIES, TUNING, BLEND_PRIZE } from '../game/content';
 import { achievements } from '../game/progress';
 import { freshSave } from '../game/save';
-import { reconcile, type Prefs } from '../game/showcase';
+import { reconcile, type Prefs } from '../game/favorites';
 import { tournamentScore } from '../game/tournament';
 import type { FishInstance, Rarity, Save } from '../game/types';
 import { state } from '../store';
@@ -54,7 +54,7 @@ export const world: World = { cast: null, rolls: { blendWins: 0, xp: 0n, special
 
 // ------------------------------------------------------------------ client-side preferences (not game state)
 
-// Saved fish and the Trophy Room: this browser's, per chain, fish collection and account (play/prefs.ts). They
+// Saved fish (the Trophy Room): this browser's, per chain, fish collection and account (play/prefs.ts). They
 // guard the game's own Sell buttons; the contracts know nothing of them.
 const scopeOf = (a: Address): PrefsScope => ({ chainId: CHAIN_ID, collection: deployment?.fish ?? zero, address: a });
 /** Preferences the browser would not store (private mode, quota): kept for as long as the page is open. */
@@ -70,13 +70,13 @@ export const inventoryReadFor = (a: Address): boolean => inventoryOf === a.toLow
 export const forgetInventory = (): void => void (inventoryOf = null);
 
 /**
- * Writes down the stars and the frames of `save`, which is the account's own view after a real read. Saved fish
- * the view does not hold are left as they were: that is for the next read to decide.
+ * Writes down the stars of `save`, which is the account's own view after a real read. Saved fish the view does
+ * not hold are left as they were: that is for the next read to decide.
  */
 export function rememberCollection(a: Address, save: Save): void {
   const here = new Set(save.fish.map((f) => f.id));
   const elsewhere = prefsOf(a).saved.filter((id) => !here.has(id));
-  keepPrefs(a, { saved: [...elsewhere, ...save.fish.filter((f) => f.isFavorite).map((f) => f.id)], showcase: save.showcase });
+  keepPrefs(a, { saved: [...elsewhere, ...save.fish.filter((f) => f.isFavorite).map((f) => f.id)] });
 }
 const LOC_KEY = 'onchain-fishing:location';
 export function rememberLocation(id: number): void {
@@ -112,13 +112,13 @@ export async function loadChainSave(): Promise<Save | null> {
   const skew = now - Number(v.timestamp) * 1000;
   const p = v.p;
   const [ids, list, values] = keep;
-  // The keepnet was read, so the preferences can be held against it: a fish that was sold or transferred leaves
-  // its frame and its star. A failed read never gets here, and so never empties the room.
+  // The keepnet was read, so the stars can be held against it: a fish that was sold or transferred is no longer
+  // saved and leaves the Trophy Room. A failed read never gets here, and so never empties the room.
   const kept = reconcile(prefsOf(me), ids.map((id) => id.toString()));
   if (kept.changed) keepPrefs(me, kept.prefs);
-  if (kept.droppedTrophies.length) {
-    const n = kept.droppedTrophies.length;
-    toast(`${n === 1 ? 'A trophy is' : `${n} trophies are`} no longer in your keepnet: ${n === 1 ? 'its frame is' : 'their frames are'} empty now`, 'info');
+  if (kept.dropped.length) {
+    const n = kept.dropped.length;
+    toast(`${n === 1 ? 'A fish you saved is' : `${n} fish you saved are`} no longer in your keepnet, and left your Trophy Room`, 'info');
   }
   const favs = new Set(kept.prefs.saved);
 
@@ -169,7 +169,6 @@ export async function loadChainSave(): Promise<Save | null> {
   s.equipped = { rod: RODS[p.rod]?.id ?? 'willow', lure: p.lure === 0 ? null : (LURES[p.lure - 1]?.id ?? null) };
   if (s.equipped.lure && !s.lures[s.equipped.lure]) s.equipped.lure = null;
   s.fish = fish;
-  s.showcase = kept.prefs.showcase;
   s.dex = {};
   v.dex.forEach((d, i) => {
     if (d.count > 0) s.dex[i] = { count: d.count, best: d.best, firstAt: 0 };

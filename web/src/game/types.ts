@@ -193,6 +193,4 @@ export interface Save {
   stats: { casts: number; catches: number; escaped: number; sold: number; earned: number };
   /** Daily challenges of the local game. */
   daily: DailyState;
-  /** The Trophy Room: six frames in the player's order, a fish id or null each (game/showcase.ts). */
-  showcase: (string | null)[];
 }

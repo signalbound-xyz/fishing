@@ -12,7 +12,6 @@ import {
   rodRepairPrice,
   rollBite,
   startCast,
-  isShowcased,
   isValuable,
   type CastTicket,
   type Hooked,
@@ -57,7 +56,6 @@ import { CHAIN, ops, refresh, refreshStandings } from '../ops';
 import { completedBy, dailySettled } from '../daily';
 import { describeGoal } from '../../game/daily';
 import { dailyBadge } from './daily';
-import { addToRoom, showRoom } from './trophyRoom';
 import { act, commit, getSave, rev } from '../state';
 import { track, trackCast, trackLanding } from '../telemetry';
 import { pearl, qualityTag, rarityTag } from './fmt';
@@ -780,20 +778,18 @@ function showCatch(l: Landing, fightLine: string | null = null): void {
   for (const id of l.unlocked) note('gold', `${LOCATIONS[id].name} unlocked`);
   for (const c of completedBy(f.id)) note('gold', `Daily challenge done: ${describeGoal(c.goal)}`);
   const canQuickSell = !f.isSpecial && !isValuable(f);
-  // A catch the player may want to keep: the Save action stands out, and the Trophy Room is offered. Nothing has to
-  // be decided: Continue fishing is always the main button.
+  // A catch the player may want to keep: the Save action stands out. It is the one collection action there is: a
+  // saved fish hangs in the Trophy Room. Nothing has to be decided: Continue fishing is always the main button.
   const notable = f.rarity >= 2 || f.isSpecial || l.newBest || l.newOverallRecord;
   const actionsEl = h('div', { class: 'reveal-actions' });
-  const keepEl = h('div', { class: 'reveal-keep' });
+  const keepEl = h('div', { class: 'reveal-keep', attrs: { role: 'status' } });
   const paint = (): void => {
-    const s = getSave();
-    const mine = s.fish.find((x) => x.id === f.id);
+    const mine = getSave().fish.find((x) => x.id === f.id);
     const isSaved = !!mine?.isFavorite;
-    const shown = isShowcased(s, f.id);
     keepEl.replaceChildren(
       ...[
-        notable && !isSaved ? h('div', { class: 'note', text: 'A catch worth keeping? Save it and no Sell button will take it.' }) : null,
-        isSaved ? h('div', { class: 'note saved-mark', text: shown ? '★ Saved and on display in your Trophy Room' : '★ Saved: protected from selling' }) : null,
+        notable && !isSaved ? h('div', { class: 'note', text: 'A catch worth keeping? Save it: it hangs in your Trophy Room and no Sell button will take it.' }) : null,
+        isSaved ? h('div', { class: 'note saved-mark', text: '★ Saved to your Trophy Room · protected from selling' }) : null,
       ].filter((x) => x !== null),
     );
     actionsEl.replaceChildren(
@@ -814,26 +810,11 @@ function showCatch(l: Landing, fightLine: string | null = null): void {
           ? h('button', {
               class: `btn save-btn${isSaved ? ' on' : notable ? ' hot' : ''}`,
               text: isSaved ? '★ Saved' : '☆ Save fish',
-              title: isSaved ? (shown ? 'On display: take it down in the Trophy Room before removing the star' : 'Protected from selling. Tap to remove the star') : 'Keeps it out of every sale until you remove the star',
+              title: isSaved ? 'In your Trophy Room, protected from selling. Tap to remove it from your favorites' : 'Hangs it in your Trophy Room and keeps it out of every sale',
               attrs: { type: 'button', 'aria-pressed': String(isSaved) },
               onclick: () => {
                 ops.toggleFavorite(f.id);
                 paint();
-              },
-            })
-          : null,
-        mine && notable && !shown
-          ? h('button', {
-              class: 'btn',
-              text: 'Add to Trophy Room',
-              title: 'Hangs it in one of your six frames and saves it',
-              attrs: { type: 'button' },
-              onclick: () => {
-                if (addToRoom(f.id) === 'choose') {
-                  // the room is full: the player picks which trophy it replaces, there
-                  hideOverlay();
-                  showRoom();
-                } else paint();
               },
             })
           : null,

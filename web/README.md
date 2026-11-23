@@ -51,18 +51,20 @@ buy tackle → rarer fish, new waters.
   nor its bonus. The contracts have no such purchase yet, so on the contracts the offer is not shown.
 - **Weekly cup**: the ten best catches of the week. Weeks roll over Thursday 00:00 UTC, the same as the
   contract's `currentWeek()`. Opponents are generated and labelled DEMO; no rank rewards are paid.
-- **Saved fish and the Trophy Room**: the star on a fish (☆ Save / ★ Saved) keeps it out of every sale until the
-  star is removed. The Trophies tab opens with **My Trophy Room**, six frames the player fills and orders by hand
-  (a fish on display is always saved), then **Saved Fish · In Reserve**, the saved fish that are not on the wall (a
-  view, `reserveFish`, so no fish is listed twice; "All Saved" lists them all), then the special fish as before. The
-  star means saved; a personal record wears a medal. The
-  catch card offers Save fish and, for a Rare or better fish or a personal best, Add to Trophy Room. The rules are in
-  `game/actions.ts` (`toggleFavorite`, `showcaseFish`, `unshowcaseFish`, `moveTrophy`, `sellFish`) and
-  `game/showcase.ts`. In the local game both live in the save. On the contracts they are preferences of this
-  browser, per chain, fish collection and account (`play/prefs.ts`): they guard the game's own Sell buttons and
-  nothing else. The fish is an NFT, the contracts know nothing of the star, and it does not stop a transfer or a
-  trade outside the game. After every successful read of the keepnet a fish that is gone leaves its frame and its
-  star; a failed read changes nothing.
+- **Saved fish and the Trophy Room**: one action, the star on a fish (☆ Save / ★ Saved), on a keepnet card and on
+  the card of a fresh catch. A saved fish is kept out of every sale until the star is removed, and every saved fish
+  hangs in **My Trophy Room** at the top of the Trophies tab: no slots, no limit, no second list. The room is a
+  view of the keepnet (`trophyFish`, `pageOf` in `game/favorites.ts`): sorted (newest, rarest, heaviest, most
+  valuable), filtered by rarity and location, and drawn twelve at a time with Load more, so a large room is never in
+  the page whole. Each frame has one button, ★ Remove from favorites; the fish stays in the keepnet. The star means
+  saved; a personal record wears a medal. Special fish can be saved like any other, which changes nothing about
+  their bonus or unlock; their own section follows the room. The rules are in `game/actions.ts` (`toggleFavorite`,
+  `sellFish`). In the local game the star lives in the save. On the contracts it is a preference of this browser,
+  per chain, fish collection and account (`play/prefs.ts`): it guards the game's own Sell buttons and nothing else.
+  The fish is an NFT, the contracts know nothing of the star, and it does not stop a transfer or a trade outside the
+  game. After every successful read of the keepnet a fish that is gone loses its star and leaves the room; a failed
+  read changes nothing. The room used to be six frames filled by hand: what hung in one is a saved fish now, read
+  from the old `showcase` field of the save and of the stored preferences wherever it is still found.
 - **Location mastery**: three tiers per water (Explorer, Experienced Angler, Master), read from the encyclopedia
   and shown in the Collection tab. **Daily challenges**: three a day (easy, medium, hard), the same all day, new
   at 00:00 UTC, in the Daily tab and as a strip under the cast button. Both are badges only: no PEARL, no energy,
@@ -164,7 +166,7 @@ src/game/              the rules, pure TypeScript, no DOM and no storage
   mastery.ts           location mastery: three tiers per water as a pure function of the encyclopedia
   daily.ts             daily challenges: the rules, the day's set (deterministic), progress, the local day
   dailyLog.ts          a player's day read from the game's events: folding, the day's first block, the streak
-  showcase.ts          saved fish and the Trophy Room as data: six frames, the stored preferences, reconciling
+  favorites.ts         saved fish and the Trophy Room as data: the room as a sorted, paged view; the stored preferences; reconciling
   actions.ts           every state change as (save, input) → new save
   save.ts              save shape, versioned migrations
   game.test.ts         unit tests
@@ -176,7 +178,7 @@ src/play/              the local game's shell
   fishSprite.ts        pixel fish drawn from shape parameters
   telemetry.ts         gameplay telemetry in the browser: the recorder over localStorage, what the UI reports
   daily.ts             daily challenges in the browser: the chain reader, its cache, what the UI shows
-  prefs.ts             on the contracts: where saved fish and the Trophy Room are kept (per chain and account)
+  prefs.ts             on the contracts: where the saved fish (the Trophy Room) are kept (per chain and account)
   ui/*.ts              pond, keepnet, daily, collection (with mastery), trophies (with trophyRoom), ranks, header, prize (the bottle reveal), stats
 src/telemetry/         telemetry format, recorder and summary: pure, no DOM
 sim/balance.sim.ts     balance simulation (BALANCE.md)

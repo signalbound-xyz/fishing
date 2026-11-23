@@ -1,12 +1,12 @@
 /**
- * Where the saved fish and the Trophy Room are kept when the game runs on the contracts: this browser, one entry
+ * Where the saved fish (the Trophy Room) are kept when the game runs on the contracts: this browser, one entry
  * per chain, fish collection and account. Fish ids are NFT ids, so the same number on another chain or another
  * collection is another fish, and another account's choices are nobody else's.
  *
- * These are preferences, not game state and not proof of anything (see game/showcase.ts). The storage is passed in,
+ * These are preferences, not game state and not proof of anything (see game/favorites.ts). The storage is passed in,
  * so an account-based store can take this browser's place later without the rest noticing.
  */
-import { emptyPrefs, parsePrefs, serializePrefs, type Prefs } from '../game/showcase';
+import { emptyPrefs, parsePrefs, serializePrefs, type Prefs } from '../game/favorites';
 
 export interface PrefsScope {
   chainId: number;
@@ -22,7 +22,7 @@ export interface KV {
 }
 
 export const prefsKey = (s: PrefsScope): string => `onchain-fishing:prefs:${s.chainId}:${s.collection.toLowerCase()}:${s.address.toLowerCase()}`;
-/** Where the favourites were kept before the Trophy Room: per account only. Read once, never written again. */
+/** Where the favourites were first kept: per account only. Read while the new entry is absent, never written again. */
 export const legacyFavsKey = (address: string): string => `onchain-fishing:favs:${address.toLowerCase()}`;
 
 function browserStore(): KV | null {

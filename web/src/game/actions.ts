@@ -10,7 +10,6 @@ import { fishPrice, levelOf, refillCost, repairCost, xpForCatch } from './econom
 import { totals, type Totals } from './equipment';
 import { pickSpecies, rollSpecial, rollWeight, speciesOdds } from './generate';
 import { achievements, canEnter, grantUnlocks, holdsSpecial, isUnlocked } from './progress';
-import { SHOWCASE_SLOTS, freeSlot, slotOf, swapped, validSlot, withTrophy, withoutTrophy } from './showcase';
 import { addEntry, tournamentScore, weekId } from './tournament';
 import type { CatchRecord, FishInstance, Quality, Rng, Save } from './types';
 
@@ -299,29 +298,12 @@ export const isValuable = (f: FishInstance): boolean => f.sellPrice >= TUNING.va
 export const isFresh = (f: FishInstance, now: number): boolean => now - f.caughtAt <= TUNING.freshWindowMs;
 /** What selling this fish pays at `now`: `sellPrice`, plus the fresh-catch bonus straight off the hook. */
 export const saleValue = (f: FishInstance, now: number): number => (isFresh(f, now) ? Math.round(f.sellPrice * (1 + TUNING.freshBonus)) : f.sellPrice);
-/** Bulk selling skips saved fish (the star; a displayed fish is always saved) and specials. */
+/** Bulk selling skips saved fish (the star: the fish of the Trophy Room) and specials. */
 export const bulkSellable = (f: FishInstance): boolean => !f.isFavorite && !f.isSpecial;
-/** Hanging in one of the Trophy Room's frames. */
-export const isShowcased = (s: Save, id: string): boolean => (s.showcase ?? []).includes(id);
-/** No Sell button takes this fish: the player saved it, or it is on display. */
-export const isProtected = (s: Save, f: FishInstance): boolean => f.isFavorite || isShowcased(s, f.id);
-/** Every saved fish, on the wall or not. */
-export const savedFish = (s: Save): FishInstance[] => s.fish.filter((f) => f.isFavorite);
-/**
- * The reserve: saved fish that are not on display. It is a view of the saved fish, not a place: nothing is moved
- * into or out of it. A fish taken down from the wall is in it at once, because it is still saved.
- */
-export const reserveFish = (s: Save): FishInstance[] => s.fish.filter((f) => f.isFavorite && !isShowcased(s, f.id));
-/** The three numbers the Trophies tab shows. `saved` is always `shown + reserve`. */
-export function collectionCounts(s: Save): { shown: number; reserve: number; saved: number; owned: number } {
-  const saved = savedFish(s).length;
-  const reserve = reserveFish(s).length;
-  return { shown: saved - reserve, reserve, saved, owned: s.fish.length };
-}
 
 /**
- * Sells exactly the given fish. All-or-nothing: an unknown id, a duplicate, a saved or a displayed fish aborts the
- * whole sale. Tournament points and encyclopedia entries stay. Specials can be sold only one at a time
+ * Sells exactly the given fish. All-or-nothing: an unknown id, a duplicate or a saved fish aborts the whole sale.
+ * Tournament points and encyclopedia entries stay. Specials can be sold only one at a time
  * (`ids.length === 1`).
  */
 export function sellFish(s: Save, ids: string[], now: number): { save: Save; earned: number } {
@@ -330,8 +312,7 @@ export function sellFish(s: Save, ids: string[], now: number): { save: Save; ear
   if (set.size !== ids.length) fail('Duplicate fish in the sale');
   const sold = s.fish.filter((f) => set.has(f.id));
   if (sold.length !== ids.length) fail('Some of these fish are no longer in the keepnet');
-  if (sold.some((f) => isShowcased(s, f.id))) fail('A fish in your Trophy Room cannot be sold: take it down and remove the star first');
-  if (sold.some((f) => f.isFavorite)) fail('Saved fish are protected from selling: remove the star first');
+  if (sold.some((f) => f.isFavorite)) fail('Saved fish are protected from selling: remove them from your favorites first');
   if (ids.length > 1 && sold.some((f) => f.isSpecial)) fail('Special fish can only be sold one at a time');
   const earned = sold.reduce((a, f) => a + saleValue(f, now), 0);
   let n: Save = {
@@ -345,50 +326,13 @@ export function sellFish(s: Save, ids: string[], now: number): { save: Save; ear
   return { save: n, earned };
 }
 
-/** The star: saves a fish (no Sell button takes it) or lets it go again. A displayed fish stays saved. */
-export function toggleFavorite(s: Save, id: string): Save {
-  const fish = s.fish.find((f) => f.id === id) ?? fail('Fish not found');
-  if (fish.isFavorite && isShowcased(s, id)) fail('This fish hangs in your Trophy Room: take it down first, then remove the star');
-  return { ...s, fish: s.fish.map((f) => (f.id === id ? { ...f, isFavorite: !f.isFavorite } : f)) };
-}
-
-// ------------------------------------------------------------------ trophy room
-
-export interface Hung {
-  save: Save;
-  /** The frame it went into. */
-  slot: number;
-  /** The fish that hung there before, if any. It stays saved. */
-  replaced: string | null;
-}
-
 /**
- * Hangs a fish in the Trophy Room and saves it. Without `slot` it takes the first empty frame; with one it takes
- * that frame, replacing what hangs there. Only a fish in the keepnet, and never the same fish twice.
+ * The star: saves a fish, which hangs it in the Trophy Room and keeps it out of every sale, or lets it go again.
+ * Nothing else about the fish or the player changes, and the fish stays where it is.
  */
-export function showcaseFish(s: Save, id: string, slot?: number): Hung {
-  if (!s.fish.some((f) => f.id === id)) fail('Only a fish in your keepnet can be displayed');
-  if (slotOf(s.showcase, id) >= 0) fail('This fish is already on display');
-  const at = slot ?? freeSlot(s.showcase);
-  if (at < 0) fail(`The Trophy Room is full: choose one of the ${SHOWCASE_SLOTS} trophies to replace`);
-  if (!validSlot(at)) fail(`The Trophy Room has ${SHOWCASE_SLOTS} frames`);
-  return {
-    save: { ...s, showcase: withTrophy(s.showcase, id, at), fish: s.fish.map((f) => (f.id === id && !f.isFavorite ? { ...f, isFavorite: true } : f)) },
-    slot: at,
-    replaced: s.showcase[at],
-  };
-}
-
-/** Takes a fish down. It stays saved: the star is removed separately. */
-export function unshowcaseFish(s: Save, id: string): Save {
-  if (slotOf(s.showcase, id) < 0) fail('This fish is not on display');
-  return { ...s, showcase: withoutTrophy(s.showcase, id) };
-}
-
-/** Two frames trade places (either may be empty): the order of the room is the player's. */
-export function moveTrophy(s: Save, from: number, to: number): Save {
-  if (!validSlot(from) || !validSlot(to)) fail(`The Trophy Room has ${SHOWCASE_SLOTS} frames`);
-  return from === to ? s : { ...s, showcase: swapped(s.showcase, from, to) };
+export function toggleFavorite(s: Save, id: string): Save {
+  if (!s.fish.some((f) => f.id === id)) fail('Fish not found');
+  return { ...s, fish: s.fish.map((f) => (f.id === id ? { ...f, isFavorite: !f.isFavorite } : f)) };
 }
 
 /** One bonus slot: picking another special replaces the current one. */

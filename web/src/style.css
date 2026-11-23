@@ -3666,27 +3666,22 @@ button.link {
   color: var(--r4);
 }
 
-/* the room: a wall with six frames */
-.room,
-.saved-sec {
+/* the room: a wall of framed catches, as many as the player saved */
+.room {
   display: grid;
   gap: 10px;
 }
-.room p,
-.saved-sec p {
+.room p {
   margin: 0;
 }
 .special-head {
   padding-top: 12px;
   border-top: 1px solid var(--line-soft);
 }
-.saved-sec {
-  padding-top: 12px;
-  border-top: 1px solid var(--line-soft);
-}
 .room-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* two frames across on a phone, more as the wall widens */
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 18px 16px;
   padding: 18px 14px 16px;
   /* planks */
@@ -3694,6 +3689,20 @@ button.link {
     repeating-linear-gradient(0deg, transparent 0 46px, color-mix(in srgb, var(--bg-deep) 55%, transparent) 46px 48px),
     color-mix(in srgb, var(--frame-wood, #6b4d33) 14%, var(--panel));
   box-shadow: var(--px-border);
+}
+.room-empty {
+  padding: 26px 14px;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 46px, color-mix(in srgb, var(--bg-deep) 55%, transparent) 46px 48px),
+    color-mix(in srgb, var(--frame-wood, #6b4d33) 14%, var(--panel));
+  box-shadow: var(--px-border);
+}
+.room-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .frame {
   --wood: #7b593b;
@@ -3719,9 +3728,6 @@ button.link {
     inset 0 0 0 6px var(--wood),
     inset 0 0 0 8px var(--wood-lo),
     5px 5px 0 0 color-mix(in srgb, var(--bg-deep) 70%, transparent);
-}
-button.frame {
-  cursor: pointer;
 }
 /* the nail it hangs on */
 .frame::before {
@@ -3779,18 +3785,6 @@ button.frame {
 .frame.r5 .frame-art {
   background: color-mix(in srgb, var(--r5) 10%, var(--bg-deep));
 }
-.frame-no {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 1;
-  min-width: 16px;
-  padding: 3px 4px 2px;
-  text-align: center;
-  font: 400 9px/1 var(--font-px);
-  color: var(--muted);
-  background: color-mix(in srgb, var(--bg-deep) 86%, transparent);
-}
 /* the brass plate under the picture */
 .frame-plate {
   display: grid;
@@ -3804,6 +3798,14 @@ button.frame {
   font: 600 13px/1.25 var(--font-body);
   color: var(--text);
   overflow-wrap: anywhere;
+}
+.frame-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
 }
 .frame-weight {
   font: 600 12px/1 var(--font-body);
@@ -3827,110 +3829,12 @@ button.frame {
   justify-content: center;
   gap: 6px;
 }
-/* a count inside a chip: "In Reserve 3" */
-.chip-n {
-  margin-left: 6px;
-  padding: 1px 4px 0;
-  font-weight: 600;
-  background: color-mix(in srgb, var(--bg-deep) 55%, transparent);
-  color: var(--text-2);
-}
-.chip.active .chip-n {
-  background: color-mix(in srgb, var(--ink) 22%, transparent);
-  color: var(--ink);
-}
-.frame.empty {
-  --wood: var(--panel-3);
-  --wood-hi: var(--line);
-  --wood-lo: var(--line-soft);
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 190px;
-  color: var(--muted);
-  background: repeating-linear-gradient(45deg, var(--panel) 0 6px, color-mix(in srgb, var(--text) 3%, var(--panel)) 6px 12px);
-}
-.frame-hole {
-  font: 400 26px/1 var(--font-px);
-  color: var(--dim);
-}
-.frame-add {
-  padding: 6px 10px 5px;
-  font: 600 12px/1 var(--font-body);
-  color: var(--ink);
-  background: var(--accent);
-  box-shadow: 0 0 0 2px var(--bg-deep);
-}
-button.frame.empty:hover .frame-add {
-  background: var(--accent-hi);
-}
-button.frame:not(.empty):hover {
-  background: var(--panel-3);
-}
-.frame.sel {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
-}
-.frame.target {
-  outline: 2px dashed var(--accent);
-  outline-offset: 4px;
-  animation: frame-target 1s steps(2, end) infinite;
-}
-.frame.target:hover {
-  outline-style: solid;
-}
-@keyframes frame-target {
-  50% {
-    outline-color: var(--accent-lo);
-  }
-}
-/* just hung: it drops onto its nail */
-.frame.just-set {
-  animation: frame-hang 0.45s steps(4, end);
-}
-@keyframes frame-hang {
-  0% {
-    transform: translateY(-10px);
-    filter: brightness(1.5);
-  }
-  60% {
-    transform: translateY(2px);
-  }
-  100% {
-    transform: none;
-    filter: none;
-  }
-}
-.room-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  font-size: 13px;
-  background: var(--accent-wash);
-  box-shadow: inset 0 0 0 2px var(--accent-line);
-}
-.room-pick {
-  display: grid;
-  gap: 10px;
-}
-.pick-grid {
-  max-height: 46vh;
-}
-.pick-grid .item {
-  font: inherit;
-}
-.saved-grid {
-  max-height: none;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-}
-.saved-grid .btn {
+/* the one thing a frame does: it stays at the foot of the frame, whatever the plate above it holds */
+.frame-remove {
+  margin-top: auto;
   white-space: normal;
-  margin-top: 0;
-}
-.saved-grid .item.shown {
-  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--r4);
+  line-height: 1.25;
+  color: var(--r4);
 }
 .specimens .save-btn {
   font-size: 12px;
@@ -3945,15 +3849,10 @@ button.frame:not(.empty):hover {
     gap: 18px 12px;
     padding: 18px 10px 12px;
   }
-  .frame.empty {
-    min-height: 150px;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .btn.save-btn.hot,
-  .frame.r5::after,
-  .frame.target,
-  .frame.just-set {
+  .frame.r5::after {
     animation: none;
   }
 }

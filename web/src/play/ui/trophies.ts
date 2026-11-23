@@ -1,10 +1,10 @@
 /**
- * Trophies: the player's Trophy Room and Saved Fish (ui/trophyRoom.ts), then the special collectible fish, what
- * they unlock and the single passive-bonus slot. The room is a display: it changes nothing about a special fish's
- * bonus or unlock.
+ * Trophies: the player's Trophy Room (ui/trophyRoom.ts: every saved fish), then the special collectible fish, what
+ * they unlock and the single passive-bonus slot. Saving a special fish hangs it in the room like any other; it
+ * changes nothing about its bonus, its unlock or what was discovered.
  */
 import { BLEND_PRIZE, LOCATIONS, SPECIALS, SPECIES } from '../../game/content';
-import { isShowcased, saleValue } from '../../game/actions';
+import { saleValue } from '../../game/actions';
 import { isUnlocked } from '../../game/progress';
 import { RARITY_CLASS } from '../../i18n';
 import { fmtWeight, h, mount, sigOf } from '../../ui/dom';
@@ -95,12 +95,12 @@ function render(rerender: () => void): HTMLElement[] {
                     h('span', { text: fmtWeight(f.weight) }),
                     qualityTag(f.quality),
                     h('span', { class: 'muted small', text: `${LOCATIONS[f.locationId].name} · ${ago(f.caughtAt)}` }),
-                    isShowcased(s, f.id) ? h('span', { class: 'saved-mark', text: `On display · Frame ${s.showcase.indexOf(f.id) + 1}` }) : null,
+                    f.isFavorite ? h('span', { class: 'saved-mark', text: 'In Trophy Room' }) : null,
                     h('div', { class: 'spacer' }),
                     h('button', {
                       class: `btn btn-sm btn-ghost save-btn${f.isFavorite ? ' on' : ''}`,
                       text: f.isFavorite ? '★ Saved' : '☆ Save',
-                      title: f.isFavorite ? 'Saved: protected from selling. Tap to remove the star' : 'Save it: no Sell button will take it',
+                      title: f.isFavorite ? 'In your Trophy Room, protected from selling. Tap to remove it from your favorites' : 'Save it to your Trophy Room: no Sell button will take it. The bonus and the unlock are not affected',
                       attrs: { type: 'button', 'aria-pressed': String(f.isFavorite) },
                       onclick: () => {
                         confirming = null;
