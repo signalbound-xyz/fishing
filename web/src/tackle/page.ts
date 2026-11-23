@@ -15,7 +15,7 @@ import { EXCHANGE_DEPLOYED, world } from '../play/chain';
 import { CHAIN, ops } from '../play/ops';
 import { emit, state } from '../store';
 import { getSave, rev } from '../play/state';
-import { h, icon, mount, sigOf } from '../ui/dom';
+import { h, icon, mount, setTip, sigOf } from '../ui/dom';
 import { LURES, RODS, lureById, rodById, type Effects, type TackleItem } from './catalog';
 import { lureSprite, rodSprite } from './sprites';
 
@@ -136,10 +136,15 @@ function actions(item: TackleItem, shop: boolean): HTMLElement[] {
       return [button(`Buy · ${pearl(item.price)}`, () => ((view.rod = item.id), run(key('buy'), () => ops.buyRod(item.id))), { primary: true, disabled: short, title: shortTitle, key: key('buy'), busy: 'Buying…' })];
     }
     const repair = rodRepairPrice(s, item.id);
+    const own = s.rods[item.id];
+    const repairTitle =
+      s.pearl < repair
+        ? `Not enough PEARL: the repair costs ${pearl(repair)}, you have ${pearl(Math.floor(s.pearl))}. Sell fish to earn ${pearl(Math.ceil(repair - s.pearl))} more.`
+        : `Restores durability from ${own.durability} to ${item.wear}`;
     return [
-      repair > 0 ? button(`Repair · ${pearl(repair)}`, () => run(key('repair'), () => ops.repairRod(item.id)), { disabled: s.pearl < repair, key: key('repair'), busy: 'Repairing…' }) : null,
+      repair > 0 ? button(`Repair · ${pearl(repair)}`, () => run(key('repair'), () => ops.repairRod(item.id)), { disabled: s.pearl < repair, title: repairTitle, key: key('repair'), busy: 'Repairing…' }) : null,
       s.equipped.rod === item.id
-        ? button('Equipped', null)
+        ? button('Equipped', null, { title: 'You are fishing with this rod' })
         : button('Equip', () => ((view.rod = item.id), run(key('equip'), () => ops.equipRod(item.id))), { primary: true, key: key('equip'), busy: 'Equipping…' }),
     ].filter((x): x is HTMLElement => !!x);
   }
@@ -352,7 +357,7 @@ function walletCard(rerender: () => void): HTMLElement {
     buy.textContent = buyingPearl ? 'Buying…' : a > 0 ? `Buy ${fmt(a * rate)} PEARL` : 'Buy PEARL';
     buy.disabled = buyingPearl || pending !== null || paused || signedOut || a <= 0 || a > balance;
     buy.classList.toggle('busy', buyingPearl);
-    buy.title = signedOut ? 'Connect with Fluent first' : a > balance ? 'You do not have that much BLEND' : a <= 0 ? 'Enter how much BLEND to spend' : '';
+    setTip(buy, signedOut ? 'Connect with Fluent first' : a > balance ? 'You do not have that much BLEND' : a <= 0 ? 'Enter how much BLEND to spend' : '');
   };
   const input = h('input', {
     class: 'num xc-input',

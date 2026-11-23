@@ -22,7 +22,6 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   if (props) {
     if (props.class) el.className = props.class;
     if (props.text !== undefined) el.textContent = props.text;
-    if (props.title) el.title = props.title;
     if (props.style) el.setAttribute('style', props.style);
     if (props.disabled !== undefined && 'disabled' in el) (el as HTMLButtonElement).disabled = props.disabled;
     if (props.onclick) el.addEventListener('click', props.onclick as EventListener);
@@ -34,7 +33,29 @@ export function h<K extends keyof HTMLElementTagNameMap>(
     if (c === null || c === undefined || c === false) continue;
     el.append(c instanceof Node ? c : String(c));
   }
+  // after the children: what the hint is to a screen reader depends on whether the element says anything itself
+  if (props?.title) setTip(el, props.title);
   return el;
+}
+
+/** Where an element's hint is kept. Not `title`: the browser shows that one late; ui/tooltip.ts shows this at once. */
+export const TIP = 'data-tip';
+
+/**
+ * Gives `el` a hint, or takes it away with an empty text. For assistive technology the hint is the element's name
+ * when it has no text of its own (an icon), and its description otherwise, as `title` would have been.
+ */
+export function setTip(el: Element, text: string): void {
+  const named = el.getAttribute('data-tip-as') ?? (el.hasAttribute('aria-label') || el.textContent?.trim() ? 'aria-description' : 'aria-label');
+  if (!text) {
+    if (el.hasAttribute(TIP)) el.removeAttribute(named);
+    el.removeAttribute(TIP);
+    el.removeAttribute('data-tip-as');
+    return;
+  }
+  el.setAttribute(TIP, text);
+  el.setAttribute('data-tip-as', named);
+  el.setAttribute(named, text);
 }
 
 /** Re-render `el` only when the signature changes (keeps focus/inputs stable across block ticks). */

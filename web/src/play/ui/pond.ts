@@ -981,7 +981,18 @@ function renderControlsView(): HTMLElement[] {
             rod.wear > 0 ? segBar(own.durability, rod.wear, 8, 'dur') : null,
             h('span', { class: broken ? 'warn small' : 'muted small', text: rod.wear > 0 ? `durability ${own.durability}/${rod.wear}` : 'never wears out' }),
             repair > 0
-              ? h('button', { class: 'btn btn-sm', text: `Repair · ${pearl(repair)}`, disabled: busy || s.pearl < repair, onclick: () => void ops.repairRod(rod.id) })
+              ? h('button', {
+                  class: 'btn btn-sm',
+                  text: `Repair · ${pearl(repair)}`,
+                  title:
+                    s.pearl < repair
+                      ? `Not enough PEARL: the repair costs ${pearl(repair)}, you have ${pearl(Math.floor(s.pearl))}. Sell fish to earn ${pearl(Math.ceil(repair - s.pearl))} more.`
+                      : busy
+                        ? 'Finish this cast first'
+                        : `Restores durability from ${own.durability} to ${rod.wear}`,
+                  disabled: busy || s.pearl < repair,
+                  onclick: () => void ops.repairRod(rod.id),
+                })
               : null,
           ),
         ),

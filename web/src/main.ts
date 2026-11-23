@@ -7,8 +7,10 @@ import './style.css';
 import { initBackdrop } from './backdrop';
 import { initDaytime, onTimeChange } from './daytime';
 import { emit } from './store';
+import { initTooltips } from './ui/tooltip';
 
 initDaytime();
 onTimeChange(emit);
 initBackdrop();
+initTooltips();
 void import('./play/app');

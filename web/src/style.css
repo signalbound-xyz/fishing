@@ -3581,3 +3581,23 @@ dialog.confirm::backdrop {
     animation: none;
   }
 }
+
+/* instant tooltips (ui/tooltip.ts) */
+.tip {
+  position: fixed;
+  z-index: 300;
+  left: 0;
+  top: 0;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 7px 10px;
+  background: var(--panel-3);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--accent-line), 4px 4px 0 1px var(--shadow);
+  pointer-events: none;
+  overflow-wrap: anywhere;
+}
+.tip[hidden] {
+  display: none;
+}
