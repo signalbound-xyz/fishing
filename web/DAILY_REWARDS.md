@@ -4,9 +4,18 @@ A player who completes all three daily challenges of a UTC day can claim **+4 en
 file is how that is checked and paid on the contracts, what has to be deployed, and how it is switched on and off.
 The challenges themselves are in [DAILY_CHALLENGES.md](DAILY_CHALLENGES.md).
 
-**State of this release: implemented and tested in the repository, deployed nowhere.** No contract on any network
-was touched. Until the steps under "Deployment" are done, the game on the contracts shows the challenges as before
-and offers no claim.
+**State: live on Fluent Testnet since 24 November 2026** (UTC day 20781, the first day that pays).
+
+| | |
+|---|---|
+| `FishingGame` | release 002 behind the same proxy `0x743595326b8DbbFF85885503AaBA1515aa48A42b` (implementation `0xB2530ed175C0182fd963502Cc5694dEA9BB3063d`) |
+| `DailyRewards` | `0xDDDb1066366525A560277e895B8A254c83cCCB35` |
+| Accepted verifier | `0x118c14427990E6CB0e2CB04360fa7F247381fFd4` |
+| First day | 20781 |
+
+The verifier that holds that key runs wherever `DAILY_REWARD_SIGNER_KEY` is set. On a host where it is not set the
+function answers `not_configured`, and a claim there fails with "Energy rewards are not switched on." before any
+transaction. On a network without `DailyRewards` the game shows the challenges and offers no claim.
 
 ## The rules
 
@@ -163,8 +172,9 @@ on any deployment where the variable was never set.
 
 ## Deployment
 
-Nothing here was run against a live network. Each step that sends a transaction needs the owner's key and is the
-owner's decision; steps 4 and 6 are the ones that make rewards real.
+These are the steps that were run on Fluent Testnet on 24 November 2026, and the ones to repeat on another
+network. Each step that sends a transaction needs the owner's key and is the owner's decision; steps 4 and 6 are
+the ones that make rewards real.
 
 1. **Preflight** (`contracts/UPGRADES.md`): `cd contracts && ./preflight.sh fluent_testnet`.
 2. **Upgrade the game** to the version with `grantEnergy`. The hook does nothing until step 6: `energyGranter` is
@@ -257,7 +267,10 @@ a request that claimed completion, fished at the pond, was authorized after 12 c
 authorization from another wallet, for another day and for another amount was refused by the contract; a second
 use reverted with `AlreadyClaimed`, and the verifier answered `already_claimed`.
 
-Not tested, because it needs a deployment: the function on Vercel itself, and a claim through Fluent Connect in a
+After the deployment on Fluent Testnet the same bundle, run on a developer machine against the public RPC, refused
+an account with no catches and authorized an account whose three challenges of the day were on the chain.
+
+Not tested by the author of this change: the function on Vercel itself, and a claim through Fluent Connect in a
 browser.
 
 ## Open risks

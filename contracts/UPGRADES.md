@@ -55,7 +55,9 @@ gives the same files. `release.json` also carries a SHA-256 of the other three f
 A release holds public chain data and build output only. The tools never read `.env` or a key.
 
 The first releases were recorded from Fluent Testnet: `FishingGame` 001 (implementation `0xDF73…dC1`, commit
-`00ae715`) and `Tournaments` 001 (implementation `0x795E…171`, commit `b252c37`).
+`00ae715`) and `Tournaments` 001 (implementation `0x795E…171`, commit `b252c37`). `FishingGame` 002
+(implementation `0xB253…063d`, commit `b74feaa`) followed on 24 November 2026: the size optimizations and the
+daily reward hook.
 
 ### Storage layout check (`check-layout.sh`, `tools/layout.py`)
 
@@ -206,7 +208,7 @@ days would then start empty, so a replacement must set its `firstDay` after the 
 ### Compatibility
 
 - **Storage**: one variable appended at the end (`energyGranter`). No struct changed. `./check-layout.sh` and
-  `./validate-upgrade.sh` pass against release 001.
+  `./validate-upgrade.sh` passed against release 001 before the upgrade.
 - **ABI**: three functions added, nothing changed or removed. The released `GameLens`, the released `Tournaments`
   and a web client built before this change work with the new code as they are.
 - **Rules**: `_reel`, the config, pools and species are untouched, so casts in the water and running tournaments
@@ -236,6 +238,11 @@ before `activate`, and none ever for a day before the first day it sets.
 
 `DailyRewards` is not behind a proxy and has no release snapshot; `preflight.sh` lists its size with the others.
 
+On Fluent Testnet all of it was done on 24 November 2026: release 002, `DailyRewards` at
+`0xDDDb1066366525A560277e895B8A254c83cCCB35` (in `deployments/20994.json`), first day 20781. From now on the fork
+rehearsal (`test_dailyRewardOnTheForkAfterTheUpgrade`) checks that an upgrade leaves the game listening to that
+contract and that it keeps paying.
+
 ## Contract size
 
 **Fluent enforces EIP-170.** Checked on Fluent Testnet by simulating a contract creation (`eth_estimateGas`, no
@@ -243,9 +250,9 @@ transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `Cre
 
 | `FishingGame` runtime bytecode | Bytes | Free |
 |---|---|---|
-| release 001, as deployed on Fluent Testnet | 24,336 | 240 |
-| after the optimizations below | 23,340 | 1,236 |
-| current source: the above plus the daily reward hook (not deployed) | 23,688 | 888 |
+| release 001, on Fluent Testnet until 24 November 2026 | 24,336 | 240 |
+| after the optimizations below (never deployed by itself) | 23,340 | 1,236 |
+| release 002, on Fluent Testnet now: the above plus the daily reward hook | 23,688 | 888 |
 
 `DailyRewards`, the plain contract that goes with the hook, is 3,802 bytes. See "The daily reward" below.
 

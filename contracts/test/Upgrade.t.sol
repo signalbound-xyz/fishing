@@ -449,11 +449,12 @@ contract UpgradeFromReleaseTest is TournamentsBase {
         assertEq(game.playerOf(erin).casts, 1);
     }
 
-    /// @dev The released code has no way to add energy; the new code has one, switched off until the owner names
-    ///      the rewards contract. Switching it on and claiming touches the claimer's energy and nothing else.
+    /// @dev Release 001 had no way to add energy; since release 002 there is one, closed until the owner names the
+    ///      rewards contract. On a world played on the released code, switching it on and claiming touches the
+    ///      claimer's energy and nothing else.
     function test_dailyRewardOnTopOfTheReleasedState() public {
-        (bool hasHook,) = address(game).staticcall(abi.encodeWithSignature("energyGranter()"));
-        assertFalse(hasHook, "the release already has the hook: this test starts from the wrong code");
+        (bool hasHook, bytes memory granter) = address(game).staticcall(abi.encodeWithSignature("energyGranter()"));
+        if (hasHook) assertEq(abi.decode(granter, (address)), address(0), "this world never opened the hook");
 
         // energy and its timer, player by player, as the released code left them
         address[6] memory who = _players();

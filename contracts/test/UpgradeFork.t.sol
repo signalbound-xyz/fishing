@@ -187,18 +187,31 @@ contract UpgradeForkTest is Test {
         }
     }
 
-    /// @dev The daily reward on the real state: the game upgraded by the real script, the rewards deployed and
-    ///      switched on by theirs, as the game's owner. A newcomer and a player the chain already knows claim.
+    /// @dev The daily reward on the real state, after the game is upgraded by the real script. Where the network
+    ///      already runs a rewards contract (Fluent Testnet since release 002), the upgrade must leave the game
+    ///      listening to it and it must keep paying: the test adds a signer of its own to that very contract, as
+    ///      its owner. Where there is none yet, the rewards are deployed and switched on by their script. A
+    ///      newcomer and players the chain already knows claim.
     function test_dailyRewardOnTheForkAfterTheUpgrade() public onFork {
-        (bool hasHook,) = address(game).staticcall(abi.encodeWithSignature("energyGranter()"));
-        assertFalse(hasHook, "the fork already has the hook");
+        (bool hasHook, bytes memory out) = address(game).staticcall(abi.encodeWithSignature("energyGranter()"));
+        address live = hasHook ? abi.decode(out, (address)) : address(0);
         _upgrade();
-        assertEq(game.energyGranter(), address(0));
+        assertEq(game.energyGranter(), live, "the upgrade changed who may add energy");
 
         uint256 key = 0xDA117;
         uint256 day = vm.getBlockTimestamp() / 1 days;
         address gameOwner = game.owner();
-        DailyRewards rewards = new DailyRewardsScript().rehearse(gameOwner, vm.addr(key), day);
+        DailyRewards rewards;
+        if (live == address(0)) {
+            rewards = new DailyRewardsScript().rehearse(gameOwner, vm.addr(key), day);
+        } else {
+            rewards = DailyRewards(live);
+            assertEq(address(rewards.game()), address(game), "the live rewards belong to another game");
+            vm.startPrank(rewards.owner());
+            rewards.setSigner(vm.addr(key), true);
+            if (rewards.firstDay() == 0 || rewards.firstDay() > day) rewards.setFirstDay(day);
+            vm.stopPrank();
+        }
         assertEq(game.energyGranter(), address(rewards));
         assertEq(rewards.owner(), gameOwner);
 
@@ -223,6 +236,8 @@ contract UpgradeForkTest is Test {
         uint256 claimed;
         for (uint256 i; i < players.length && claimed < 3; i++) {
             address who = players[i];
+            // somebody who took today's reward on the live network has nothing left to claim here
+            if (rewards.claimed(who, day)) continue;
             // their bars are usually full: fish for them until there is room (a broken rod or a locked state skips them)
             try this.makeRoom(who) {} catch {
                 continue;
