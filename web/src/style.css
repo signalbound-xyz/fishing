@@ -1164,6 +1164,13 @@ div.item {
 .board tbody tr:nth-child(3) td:first-child {
   color: var(--warn);
 }
+/* a board whose first column is a name, not a place: one colour for every row, dimmed where there is nothing yet */
+.board.board-list tbody tr td:first-child {
+  color: var(--text-2);
+}
+.board.board-list tbody tr.none td:first-child {
+  color: var(--dim);
+}
 .board tbody tr:nth-child(even) td {
   background: color-mix(in srgb, var(--text) 3%, transparent);
 }

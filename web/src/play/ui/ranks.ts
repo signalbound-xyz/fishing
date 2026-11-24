@@ -216,13 +216,14 @@ function biggest(): HTMLElement[] {
       h('h3', { text: 'Record by location' }),
       h(
         'table',
-        { class: 'board' },
+        // a list of waters, not a ranking: no medal colours for its first three rows
+        { class: 'board board-list' },
         h(
           'tbody',
           null,
           LOCATIONS.map((l) => {
             const r = s.records.byLocation[l.id];
-            return h('tr', null, h('td', { text: l.name }), h('td', null, r ? dot(r.speciesId) : h('span', { class: 'muted', text: '—' })), h('td', { text: r ? fmtWeight(r.weight) : '' }));
+            return h('tr', { class: r ? '' : 'none' }, h('td', { text: l.name }), h('td', null, r ? dot(r.speciesId) : h('span', { class: 'muted', text: '—' })), h('td', { text: r ? fmtWeight(r.weight) : '' }));
           }),
         ),
       ),
