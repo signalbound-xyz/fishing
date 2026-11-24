@@ -9,6 +9,8 @@ import {PearlToken} from "../src/PearlToken.sol";
 import {FishNFT} from "../src/FishNFT.sol";
 import {GameLens} from "../src/GameLens.sol";
 import {Upgrade} from "../script/Upgrade.s.sol";
+import {DailyRewards} from "../src/DailyRewards.sol";
+import {DailyRewardsScript} from "../script/DailyRewards.s.sol";
 
 /// @notice The rehearsal of an upgrade on the real thing: a fork of a live network. The proxies there are pointed at
 ///         the current source, and every player the chain knows, every fish and every tournament must read exactly
@@ -183,5 +185,92 @@ contract UpgradeForkTest is Test {
             game.reelFor(players[i]);
             assertEq(game.castOf(players[i]).targetBlock, 0);
         }
+    }
+
+    /// @dev The daily reward on the real state: the game upgraded by the real script, the rewards deployed and
+    ///      switched on by theirs, as the game's owner. A newcomer and a player the chain already knows claim.
+    function test_dailyRewardOnTheForkAfterTheUpgrade() public onFork {
+        (bool hasHook,) = address(game).staticcall(abi.encodeWithSignature("energyGranter()"));
+        assertFalse(hasHook, "the fork already has the hook");
+        _upgrade();
+        assertEq(game.energyGranter(), address(0));
+
+        uint256 key = 0xDA117;
+        uint256 day = vm.getBlockTimestamp() / 1 days;
+        address gameOwner = game.owner();
+        DailyRewards rewards = new DailyRewardsScript().rehearse(gameOwner, vm.addr(key), day);
+        assertEq(game.energyGranter(), address(rewards));
+        assertEq(rewards.owner(), gameOwner);
+
+        // a newcomer: four casts at the pond make the room
+        address angler = makeAddr("fork angler");
+        for (uint256 i; i < 4; i++) {
+            vm.prank(angler);
+            game.cast(0);
+            uint64 target = game.castOf(angler).targetBlock;
+            vm.roll(target + 1);
+            vm.setBlockhash(target, keccak256(abi.encode("fork", i)));
+            vm.prank(angler);
+            game.reel();
+        }
+        assertEq(game.currentEnergy(angler), 16);
+        _claim(rewards, key, angler, day);
+        assertEq(game.currentEnergy(angler), 20);
+        vm.expectRevert(DailyRewards.AlreadyClaimed.selector);
+        this.claimAs(rewards, key, angler, day);
+
+        // players the chain knows: once there is room they get exactly four, and nothing else about them moves
+        uint256 claimed;
+        for (uint256 i; i < players.length && claimed < 3; i++) {
+            address who = players[i];
+            // their bars are usually full: fish for them until there is room (a broken rod or a locked state skips them)
+            try this.makeRoom(who) {} catch {
+                continue;
+            }
+            uint256 had = game.currentEnergy(who);
+            if (had > 16) continue;
+            FishingGame.Player memory before = game.playerOf(who);
+            uint256 pearls = pearl.balanceOf(who);
+            uint256 fishHeld = fish.balanceOf(who);
+            _claim(rewards, key, who, day);
+            FishingGame.Player memory after_ = game.playerOf(who);
+            assertEq(game.currentEnergy(who), had + 4);
+            (before.energy, before.energyUpdatedAt) = (after_.energy, after_.energyUpdatedAt);
+            assertEq(keccak256(abi.encode(after_)), keccak256(abi.encode(before)), "only the energy moved");
+            assertEq(pearl.balanceOf(who), pearls);
+            assertEq(fish.balanceOf(who), fishHeld);
+            claimed++;
+        }
+        emit log_named_uint("known players who claimed", claimed);
+    }
+
+    /// @dev Casts at the pond for `who` until four points of the bar are free. External, so that a player who
+    ///      cannot cast is skipped instead of failing the rehearsal.
+    function makeRoom(address who) external {
+        for (uint256 i; game.currentEnergy(who) > 16; i++) {
+            uint64 pending = game.castOf(who).targetBlock;
+            if (pending != 0) {
+                if (block.number <= pending) vm.roll(pending + 1);
+                game.reelFor(who);
+            }
+            vm.prank(who);
+            game.cast(0);
+            uint64 target = game.castOf(who).targetBlock;
+            vm.roll(target + 1);
+            vm.setBlockhash(target, keccak256(abi.encode("room", who, i)));
+            game.reelFor(who);
+        }
+    }
+
+    function _claim(DailyRewards rewards, uint256 key, address who, uint256 day) internal {
+        uint256 deadline = vm.getBlockTimestamp() + 30 minutes;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, rewards.digest(who, day, 1, 4, deadline));
+        vm.prank(who);
+        rewards.claimDailyReward(day, DailyRewards.Authorization(1, 4, deadline, abi.encodePacked(r, s, v)));
+    }
+
+    /// @dev External, so that a revert can be expected of the claim itself.
+    function claimAs(DailyRewards rewards, uint256 key, address who, uint256 day) external {
+        _claim(rewards, key, who, day);
     }
 }

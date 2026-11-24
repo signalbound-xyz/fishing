@@ -36,7 +36,7 @@ export function freshSave(now: number): Save {
     weeks: {},
     claimed: [],
     stats: { casts: 0, catches: 0, escaped: 0, sold: 0, earned: 0 },
-    daily: { day: 0, set: null, catches: [], streak: { day: 0, count: 0 } },
+    daily: { day: 0, set: null, catches: [], streak: { day: 0, count: 0 }, rewards: { earned: [], claimed: [] } },
   };
 }
 

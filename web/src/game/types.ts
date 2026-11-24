@@ -154,6 +154,11 @@ export interface DailyState {
   catches: DayCatch[];
   /** The last day on which all three were completed, and how many days in a row that made. */
   streak: { day: number; count: number };
+  /**
+   * The reward book (game/dailyReward.ts): completed days written down when the day turned, and days whose reward
+   * was taken. Only today and yesterday are kept. Absent in saves from before the reward existed.
+   */
+  rewards?: { earned: number[]; claimed: number[] };
 }
 
 export interface Save {

@@ -127,10 +127,25 @@ energy (the cups are; see BALANCE_REVIEW.md §5.2).
 
 ## Rewards
 
-This release gives badges: a mastery badge per water, a "Done" stamp per challenge, the day's three pips and a
-streak. There is no claim button.
+A challenge gives a "Done" stamp, a day gives its three pips and feeds the streak, a water gives a mastery badge.
+On top of that a full day, all three challenges, earns **+4 energy**. Nothing is paid for a single challenge, and
+no PEARL is paid for anything here.
 
-`DAILY_REWARD` in `src/game/daily.ts` reserves the first real reward and is switched off: 4 energy for a full set,
-never above the bar (`rewardEnergy`). Turning it on is not a client change. Somebody other than the player's
-browser has to check the day's catches, pay exactly once per player and day, and cap the energy: a contract that
-reads the same events, or a trusted backend that does and then calls one.
+- It is claimed by hand in the Daily tab (`Claim +4 Energy`); completing the day does not claim it.
+- Once per player and UTC day, on the day itself or the day after. The panel says until when.
+- It is added in full or not at all, and never lifts energy over the bar of 20: with more than 16 energy the claim
+  waits ("Spend 2 energy to claim your full +4 reward.") and opens when the energy is spent. Regenerated energy
+  counts. Regeneration, the bar and the cost of a cast are as they were.
+- The streak and mastery do not depend on it.
+
+Who checks the day is different in the two games, and the two never mix:
+
+- **On the contracts** the page decides nothing. A verifier reads the player's catches from the chain, rebuilds the
+  day's set by the rules above and signs an authorization for that player, day and contract; the `DailyRewards`
+  contract checks it, records the claim and has the game add the energy. Nothing a browser says about catches,
+  no local save and no telemetry is an input. Until `DailyRewards` is deployed and its first day has come, the tab
+  promises nothing and shows no claim button. All of it: [DAILY_REWARDS.md](DAILY_REWARDS.md).
+- **In the local game** the reward is an action on the save (`claimDailyReward` in `src/game/actions.ts`), labelled
+  as a local reward. A completed day is written into the save when the day turns, so yesterday's reward is still
+  there today; the first paying day is `DAILY_REWARD.localFirstDay` (24 November 2026), and days completed before
+  it stay badges. A local save cannot authorize anything on a chain.

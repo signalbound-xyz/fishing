@@ -173,6 +173,69 @@ the new code has not written anything the old code cannot read (a new `unlockTyp
 new bit). So new features ship switched off and are switched on by a separate transaction; after that the fix is
 forward only. Minted and burned PEARL and fish, and paid BLEND, are never rolled back.
 
+## The daily reward (`grantEnergy`, `DailyRewards`)
+
+The reward for a full day of daily challenges (+4 energy; `web/DAILY_REWARDS.md` has the whole design) is the
+first change since release 001 that adds to the game's interface. It is two pieces.
+
+**In `FishingGame`: one hook, 348 bytes.**
+
+```solidity
+address public energyGranter;                                 // appended after totalBlendWon
+function setEnergyGranter(address granter) external onlyOwner;
+function grantEnergy(address player, uint256 amount) external; // only energyGranter
+```
+
+`grantEnergy` settles regeneration with the function `cast` uses, adds the amount, and reverts with `EnergyFull`
+when the result would be over `config.maxEnergy`: all of it or nothing. It does not touch `energyUpdatedAt` beyond
+what the settlement does, so a regeneration period that is running keeps its remainder. It emits nothing; the
+event is `DailyRewardClaimed` on the rewards contract (an event here cost another 50 bytes). With `energyGranter`
+zero, which is its value after the upgrade, nobody can call it.
+
+**`DailyRewards`: a plain contract, 3,802 bytes, not a proxy.** It holds what the game has no room for: the
+EIP-712 check of the verifier's authorization, the list of accepted signer keys, the first claimable day and the
+bitmap of claimed days. It keeps no energy and no balances: energy stays in the game's `players` mapping. It is
+called, never delegatecalled, and the game calls nothing on it.
+
+Why this shape: everything in one contract did not fit (ECDSA, the domain separator and a bitmap are over 2 KB),
+and the alternatives that make room in the game are the ones in the table at the end of this file, each a larger
+change than this feature. A separate contract that the game merely listens to costs the game 348 bytes, cannot
+corrupt its storage, and can be replaced by deploying another and pointing `energyGranter` at it; the claimed
+days would then start empty, so a replacement must set its `firstDay` after the last day the old one paid.
+
+### Compatibility
+
+- **Storage**: one variable appended at the end (`energyGranter`). No struct changed. `./check-layout.sh` and
+  `./validate-upgrade.sh` pass against release 001.
+- **ABI**: three functions added, nothing changed or removed. The released `GameLens`, the released `Tournaments`
+  and a web client built before this change work with the new code as they are.
+- **Rules**: `_reel`, the config, pools and species are untouched, so casts in the water and running tournaments
+  are not affected and step 3 of the procedure needs no waiting.
+- **State**: `test/Upgrade.t.sol` (`test_dailyRewardOnTopOfTheReleasedState`) plays the world on the released
+  bytecode, upgrades, deploys and activates the rewards, and claims: the claimant's energy goes up by four with the
+  timer where it was, and every other player, fish and cup reads as before.
+  `test/UpgradeFork.t.sol` (`test_dailyRewardOnTheForkAfterTheUpgrade`) does it on a fork of Fluent Testnet with
+  the real scripts: a newcomer and the players the chain already knows claim once and cannot claim twice.
+- **Rollback**: pointing the proxy back at release 001 is safe at any time. The old code never reads the new slot,
+  and a claim then reverts as a whole (`DailyRewards` calls a function the game no longer has), so no day is
+  marked claimed without its energy.
+
+### Gas
+
+From `forge test --gas-report`: `claimDailyReward` 77,808 median, 91,871 at most (the first claim of a player
+whose bitmap word and energy slot are both cold). The same 77,808 was measured for a claim on a fork of Fluent
+Testnet. A claim that reverts for a full bar costs about 26,000. Deploying `DailyRewards` is about 920,000 gas.
+
+### Procedure
+
+The upgrade of the game is the procedure below, unchanged (`TARGET=game`). After it the hook exists and is
+closed. Deploying `DailyRewards`, giving it a signer and a first day, and opening the hook are separate, explicit
+transactions of `script/DailyRewards.s.sol` (`deploy`, `activate`, and for incidents `revoke`, `stop`, `detach`);
+`web/DAILY_REWARDS.md`, "Deployment", has them in order together with the verifier's side. No reward exists
+before `activate`, and none ever for a day before the first day it sets.
+
+`DailyRewards` is not behind a proxy and has no release snapshot; `preflight.sh` lists its size with the others.
+
 ## Contract size
 
 **Fluent enforces EIP-170.** Checked on Fluent Testnet by simulating a contract creation (`eth_estimateGas`, no
@@ -181,7 +244,10 @@ transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `Cre
 | `FishingGame` runtime bytecode | Bytes | Free |
 |---|---|---|
 | release 001, as deployed on Fluent Testnet | 24,336 | 240 |
-| current source, after the optimizations below (not deployed) | 23,340 | 1,236 |
+| after the optimizations below | 23,340 | 1,236 |
+| current source: the above plus the daily reward hook (not deployed) | 23,688 | 888 |
+
+`DailyRewards`, the plain contract that goes with the hook, is 3,802 bytes. See "The daily reward" below.
 
 ### What was optimized
 
@@ -220,9 +286,11 @@ break the released lens.
 
 ### What 1,236 bytes buy
 
-Paid location unlocks (`buyLocation`, `setLocationOffer`, one mapping) measure 838 bytes on top: 24,178, with 398
-bytes left. So the next feature fits, and nothing after it does. The target of 3 KB needs one of the following.
-All sizes are measured on the current source, each in a throwaway copy; none of it is in the repository.
+The daily reward hook took 348 of them (below); 888 are left. Paid location unlocks (`buyLocation`,
+`setLocationOffer`, one mapping) measured 838 bytes on top of the 23,340: with the hook that is 24,526, with 50
+bytes left. So that feature still fits, barely, and nothing after it does. The target of 3 KB needs one of the
+following. All sizes were measured on the source before the hook (23,340), each in a throwaway copy; none of it is
+in the repository.
 
 | | Size | Free | Content setters stay on the game | Delegatecall | Changes the ABI |
 |---|---|---|---|---|---|
@@ -306,6 +374,10 @@ network with real value needs the owner to be a multisig behind a timelock befor
 - **Fish metadata.** `FishNFT.updateSpecies` rewrites the name, rarity and weight range of every fish of a species,
   and a raised minimum weight makes `tokenURI` revert for lighter fish. Do not call it; add a new species instead.
 - **One key** owns everything (see "Secrets").
+- **The daily reward trusts an off-chain verifier** for "this player completed this day". Its key can add at most
+  4 energy per player and day, for today and yesterday, never over the bar, and nothing else; the owner revokes it
+  with one transaction (`web/DAILY_REWARDS.md`, "What the key can do" and "Switching it off"). `energyGranter` is
+  set by the same one key as everything else.
 - **Players the chain cannot name.** The fork rehearsal compares every player it can find through fish, boards and
   tournaments. A player who cast and never landed anything is not found; their state is covered by the slot
   comparison of the local test only in kind, not individually.

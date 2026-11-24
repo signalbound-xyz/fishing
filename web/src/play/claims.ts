@@ -6,6 +6,7 @@
 import { CHAIN_ID } from '../config';
 import { emit, state } from '../store';
 import { ops } from './ops';
+import { rewardClaims } from './dailyReward';
 import { createPending, pendingKey } from './pending';
 
 const claims = createPending(emit);
@@ -19,3 +20,9 @@ export const claimsSig = (): string[] => claims.keys();
 
 /** Resolves to the PEARL reward, or undefined when nothing was claimed (refused, failed, or already on its way). */
 export const claim = (id: string): Promise<number | undefined> => claims.run(keyOf(id), () => ops.claimAchievement(id));
+
+/**
+ * Claims the daily reward of `day`; a second click while one is on its way does nothing. Resolves to whether it was
+ * granted (false too when it was already on its way).
+ */
+export const claimDailyReward = (day: number): Promise<boolean> => rewardClaims.run(day, () => ops.claimDailyReward(day)).then((ok) => ok === true);

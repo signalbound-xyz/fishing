@@ -182,7 +182,7 @@ Looked at and dropped: a recipe of the day (handing in the fish named that day).
 5. PEARL is burned on rods (`buyRod`), lures (`buyLure`), repairs and energy refills (each further refill on the same day costs ×2).
 6. Progress is onchain: XP and level, the species encyclopedia, permanent location unlocks, personal records, the ten best catches of each week, and achievements that pay PEARL once.
 
-Location mastery (three tiers per water) and the three daily challenges are computed by the client from this state and from the game's `Caught` events. They are badges: the contracts store nothing for them and pay nothing. See [web/DAILY_CHALLENGES.md](web/DAILY_CHALLENGES.md).
+Location mastery (three tiers per water) and the three daily challenges are computed by the client from this state and from the game's `Caught` events; the game contract stores nothing for them. Mastery is a badge. A full day of challenges earns +4 energy, once per player and UTC day: an off-chain verifier reads the same events and signs an authorization, and the `DailyRewards` contract checks it and has the game add the energy (never over the bar, never PEARL). It is prepared in this repository and not deployed. See [web/DAILY_CHALLENGES.md](web/DAILY_CHALLENGES.md) and [web/DAILY_REWARDS.md](web/DAILY_REWARDS.md).
 
 What the contract decides, the client cannot. Once a cast's block exists its outcome is fixed and public, so the client computes it, plays the bite, the hook and the fight on it, and settles afterwards: skill there changes how soon you land the fish, never which fish it is. See [ARCHITECTURE.md](ARCHITECTURE.md).
 

@@ -186,6 +186,9 @@ contract FishingGame is Ownable {
     uint256 public totalCasts;
     uint256 public totalBlendWon;
 
+    /// @notice The one contract that may add energy to a player (src/DailyRewards.sol). Zero: nobody can.
+    address public energyGranter;
+
     // ------------------------------------------------------------------ errors & events
 
     error UnknownRod();
@@ -439,6 +442,22 @@ contract FishingGame is Ownable {
     function _syncEnergy(Player storage p) internal {
         (uint256 e, uint256 at) = _energy(p);
         (p.energy, p.energyUpdatedAt) = (uint32(e), uint40(at));
+    }
+
+    function setEnergyGranter(address granter) external onlyOwner {
+        energyGranter = granter;
+    }
+
+    /// @notice Adds `amount` energy to `player`, all of it or none: with less room in the bar it reverts, so a
+    ///         reward is never cut short. Regeneration is settled first and its running period is kept.
+    /// @dev Only for `energyGranter`, which decides who has earned it. The bar and the timer stay here.
+    function grantEnergy(address player, uint256 amount) external {
+        if (msg.sender != energyGranter) revert OwnableUnauthorizedAccount(msg.sender);
+        Player storage p = players[player];
+        _syncEnergy(p);
+        uint256 e = p.energy + amount;
+        if (e > config.maxEnergy) revert EnergyFull();
+        p.energy = uint32(e);
     }
 
     // ------------------------------------------------------------------ progression

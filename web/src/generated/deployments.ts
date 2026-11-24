@@ -14,6 +14,8 @@ export interface Deployment {
   tournaments?: `0x${string}`;
   /** The BLEND bottle pool, once the game pays bottles out of it. */
   bottles?: `0x${string}`;
+  /** The reward for a full day of daily challenges, once it is deployed. Without it the client offers no claim. */
+  dailyRewards?: `0x${string}`;
 }
 
 export const deployments: Record<string, Deployment> = {

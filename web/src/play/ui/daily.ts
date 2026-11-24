@@ -1,11 +1,17 @@
-/** Daily challenges: three cards, how far each one is, the countdown to the next day and the streak. */
+/**
+ * Daily challenges: three cards, how far each one is, the countdown to the next day, the streak, and the reward
+ * for a full day (+4 energy, claimed here by hand; play/dailyReward.ts).
+ */
 import { LOCATIONS } from '../../game/content';
 import { describeGoal, goalHint, progressLabel, type DailyChallenge, type Progress } from '../../game/daily';
+import { friendlyError } from '../../errors';
 import { openFluentConnect } from '../../fluent';
 import { state } from '../../store';
 import { h, mount, segBar, sigOf } from '../../ui/dom';
 import { toast } from '../../ui/toast';
+import { claimDailyReward } from '../claims';
 import { dailyView, takeCompletions, type DailyView } from '../daily';
+import { rewardView, type RewardPanel, type RewardView } from '../dailyReward';
 import { CHAIN, ops } from '../ops';
 import { getSave, rev } from '../state';
 import { duration } from './fmt';
@@ -23,7 +29,7 @@ export function initDaily(host: HTMLElement, pondBusy: () => boolean): () => voi
     () => {
       const v = dailyView();
       // the countdown moves by the minute, and by the second in the last minute
-      return sigOf(rev(), state.wallet?.address, v.status, v.day, v.stale, v.streak, v.streakOpen, v.set?.challenges.map((c) => c.id), v.progress?.each, v.resetIn > 60 ? Math.floor(v.resetIn / 60) : v.resetIn, busy(), getSave().location);
+      return sigOf(rev(), state.wallet?.address, v.status, v.day, v.stale, v.streak, v.streakOpen, v.set?.challenges.map((c) => c.id), v.progress?.each, v.resetIn > 60 ? Math.floor(v.resetIn / 60) : v.resetIn, busy(), getSave().location, rewardSig(rewardView(v)));
     },
     render,
   );
@@ -59,6 +65,75 @@ function streakLine(v: DailyView): HTMLElement | null {
   if (v.streak === null) return null;
   if (v.streak === 0) return h('span', { class: 'muted small', text: 'No streak yet: finish all three to start one' });
   return h('span', { class: 'daily-streak', title: 'Days in a row with all three challenges done' }, `${v.streak}${v.streakOpen ? '+' : ''}-day streak`);
+}
+
+// ------------------------------------------------------------------ the reward for a full day
+
+const UTC_DAY = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+/** "25 Nov" for a UTC day number. */
+const dayName = (day: number): string => UTC_DAY.format(day * 86_400_000);
+
+/** What of the reward the tab redraws on: its state, the energy it is weighed against, and the time left by the minute. */
+function rewardSig(r: RewardView): unknown {
+  const one = (p: RewardPanel | null): unknown => p && [p.day, p.status, p.spend, p.pending, Math.floor(p.endsIn / 60)];
+  return [r.on, r.startsOn, r.unread, r.energy, one(r.today), one(r.yesterday)];
+}
+
+function claim(p: RewardPanel, amount: number): void {
+  // every refusal has been told to the player where it happened (play/dailyReward.ts, play/state.ts); the toast
+  // of success comes only after the chain confirmed the claim and the energy was read again
+  claimDailyReward(p.day).then(
+    (ok) => ok && toast(`+${amount} Energy received!`, 'ok', 5000),
+    (e) => {
+      console.warn('daily reward claim failed', e);
+      toast(`Daily reward: ${friendlyError(e)}`, 'err', 6000);
+    },
+  );
+}
+
+/** One day's reward: what it is, whether it can be taken now, and until when. Null when there is nothing to say. */
+function rewardPanel(r: RewardView, p: RewardPanel): HTMLElement | null {
+  if (p.status === 'off' || p.status === 'incomplete' || p.status === 'expired') return null;
+  const mine = p.when === 'today';
+  const claimed = p.status === 'claimed' && !p.pending;
+  const full = p.status === 'full' && !p.pending;
+  const until = `Claim before 00:00 UTC on ${dayName(p.day + 2)} · ${duration(p.endsIn * 1000)} left`;
+  const action = claimed
+    ? h('span', { class: 'badge badge-on daily-reward-done', text: 'Reward claimed' })
+    : h('button', {
+        class: `btn btn-primary${p.pending ? ' busy' : ''}`,
+        text: p.pending ? 'Claiming…' : `Claim +${r.amount} Energy`,
+        title: p.pending ? (CHAIN ? 'Waiting for the transaction' : undefined) : full ? `Spend ${p.spend} energy first: the bar has no room for all ${r.amount}` : undefined,
+        disabled: p.pending || full,
+        attrs: p.pending ? { type: 'button', 'aria-busy': 'true' } : { type: 'button' },
+        onclick: () => claim(p, r.amount),
+      });
+  return h(
+    'section',
+    { class: `daily-reward ${claimed ? 'claimed' : full ? 'full' : 'ready'}`, attrs: { 'data-day': String(p.day), 'aria-label': mine ? 'Today’s reward' : 'Yesterday’s reward' } },
+    h(
+      'div',
+      { class: 'daily-reward-text' },
+      h('b', { class: 'daily-reward-title', text: mine ? 'Day complete!' : `Yesterday’s reward · ${dayName(p.day)}` }),
+      h('span', { class: 'daily-reward-what', text: `Reward: +${r.amount} Energy` }),
+      full ? h('span', { class: 'daily-reward-energy', text: `${r.energy}/${r.max} Energy` }) : null,
+      full ? h('span', { class: 'warn small', attrs: { role: 'status' }, text: `Spend ${p.spend} energy to claim your full +${r.amount} reward.` }) : null,
+      claimed ? null : h('span', { class: 'muted small', text: until }),
+      r.local ? h('span', { class: 'muted small', text: 'Local game reward: kept in this browser, not on chain.' }) : null,
+    ),
+    action,
+  );
+}
+
+/** Everything about the reward that goes between the summary and the cards. */
+function rewardBlock(r: RewardView): (HTMLElement | null)[] {
+  if (r.unread) return [h('p', { class: 'muted small', attrs: { role: 'status' }, text: 'The energy reward could not be read from the chain just now. Trying again shortly.' })];
+  if (!r.on) return [r.startsOn !== null ? h('p', { class: 'muted small', text: `Energy rewards begin on ${dayName(r.startsOn)} (00:00 UTC): +${r.amount} energy for a full day.` }) : null];
+  return [
+    r.yesterday ? rewardPanel(r, r.yesterday) : null,
+    r.today ? rewardPanel(r, r.today) : null,
+    r.today?.status === 'incomplete' ? h('p', { class: 'daily-reward-preview', text: `Complete all three challenges to earn +${r.amount} energy.` }) : null,
+  ];
 }
 
 function render(): HTMLElement[] {
@@ -100,6 +175,7 @@ function render(): HTMLElement[] {
   if (done.length || full) requestAnimationFrame(() => celebrate([...freshIds], full));
 
   const p = v.progress;
+  const reward = rewardView(v);
   return [
     head,
     v.stale ? h('p', { class: 'warn small', attrs: { role: 'status' }, text: 'The chain could not be read just now. This is the last copy kept on this device; it may be behind.' }) : null,
@@ -113,6 +189,7 @@ function render(): HTMLElement[] {
       ),
       h('div', { class: 'daily-sum-text' }, h('b', { text: p.complete ? 'Day complete' : `${p.done} of ${p.each.length} done` }), streakLine(v)),
     ),
+    ...rewardBlock(reward),
     h(
       'div',
       { class: 'daily-cards' },
@@ -122,7 +199,10 @@ function render(): HTMLElement[] {
       'p',
       { class: 'muted small' },
       CHAIN ? 'Counted from your catches confirmed on chain since 00:00 UTC, on any device. ' : 'Local game: the day is kept in this browser. ',
-      'A fish counts for every challenge it fits. The reward is the badge and the streak: no PEARL or energy.',
+      'A fish counts for every challenge it fits. ',
+      reward.on
+        ? `A full day earns +${reward.amount} energy, once, claimed here by hand today or tomorrow (UTC). It is added only in full: with more than ${reward.max - reward.amount} energy, spend some first. No PEARL comes with it.`
+        : 'The reward is the badge and the streak: no PEARL or energy.',
     ),
   ].filter((x): x is HTMLElement => !!x);
 }

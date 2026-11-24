@@ -7,3 +7,4 @@ export { marketplaceAbi } from '../generated/Marketplace';
 export { pearlExchangeAbi } from '../generated/PearlExchange';
 export { tournamentsAbi } from '../generated/Tournaments';
 export { bottlePoolAbi } from '../generated/BottlePool';
+export { dailyRewardsAbi } from '../generated/DailyRewards';

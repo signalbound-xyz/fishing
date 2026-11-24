@@ -830,6 +830,19 @@ export const fishingGameAbi = [
   },
   {
     "type": "function",
+    "name": "energyGranter",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "equipLure",
     "inputs": [
       {
@@ -885,6 +898,24 @@ export const fishingGameAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "grantEnergy",
+    "inputs": [
+      {
+        "name": "player",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1745,6 +1776,19 @@ export const fishingGameAbi = [
             "internalType": "uint8"
           }
         ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setEnergyGranter",
+    "inputs": [
+      {
+        "name": "granter",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],

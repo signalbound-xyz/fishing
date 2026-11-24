@@ -5,7 +5,8 @@
  */
 import { LURES, RODS, lureById, rodById } from '../tackle/catalog';
 import { BLEND_PRIZE, LOCATIONS, PEARL_PER_BLEND, SPECIES, TUNING, special } from './content';
-import { LOCAL_PLAYER, freshDaily, profileOf, recordCatch } from './daily';
+import { DAILY_REWARD, LOCAL_PLAYER, freshDaily, localClaimed, localEarned, markLocalClaim, profileOf, recordCatch } from './daily';
+import { REWARD_ENERGY, rewardStatus, type RewardCheck } from './dailyReward';
 import { fishPrice, levelOf, refillCost, repairCost, xpForCatch } from './economy';
 import { totals, type Totals } from './equipment';
 import { pickSpecies, rollSpecial, rollWeight, speciesOdds } from './generate';
@@ -50,6 +51,41 @@ export function refillEnergy(s: Save, now: number): Save {
   const price = refillPrice(s, now);
   if (s.pearl < price) fail('Not enough PEARL');
   return { ...s, pearl: s.pearl - price, energy: TUNING.maxEnergy, energyAt: now, refills: { day: utcDay(now), count: refillsToday(s, now) + 1 } };
+}
+
+// ------------------------------------------------------------------ the daily reward (local game)
+
+/** Local game: what stands between the player and the reward of `day` right now. */
+export function dailyRewardCheck(s: Save, day: number, now: number): RewardCheck {
+  const d = s.daily ?? freshDaily();
+  return rewardStatus({ day, today: utcDay(now), firstDay: DAILY_REWARD.localFirstDay, complete: localEarned(d, day), claimed: localClaimed(d, day), energy: energyNow(s, now), max: TUNING.maxEnergy });
+}
+
+/**
+ * Local game: takes the reward of a completed day, +4 energy, once. All of it or nothing: with less room in the bar
+ * the claim is refused and stays open. It costs nothing, and the running regeneration period is kept.
+ *
+ * This is the save's own word about the save's own day. It never reaches the contracts or the verifier: an
+ * on-chain reward is decided from the chain's events alone (src/server/dailyReward.ts).
+ */
+export function claimDailyReward(s: Save, day: number, now: number): Save {
+  const check = dailyRewardCheck(s, day, now);
+  switch (check.status) {
+    case 'off':
+      return fail('There is no reward for that day');
+    case 'expired':
+      return fail('That reward has expired');
+    case 'claimed':
+      return fail('This reward is already claimed');
+    case 'incomplete':
+      return fail('Complete all three challenges first');
+    case 'full':
+      return fail(`Spend ${check.spend} energy to claim your full +${REWARD_ENERGY} reward`);
+    case 'ready':
+      break;
+  }
+  const settled = settleEnergy(s, now);
+  return { ...settled, energy: settled.energy + REWARD_ENERGY, daily: markLocalClaim(s.daily ?? freshDaily(), day, utcDay(now)) };
 }
 
 // ------------------------------------------------------------------ BLEND → PEARL

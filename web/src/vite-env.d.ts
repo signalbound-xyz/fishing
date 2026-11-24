@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_GAME_MODE?: string;
   /** `off` stops the in-browser gameplay telemetry (see src/play/telemetry.ts). On by default; nothing is sent anywhere. */
   readonly VITE_TELEMETRY?: string;
+  /** Where the daily reward verifier answers (web/DAILY_REWARDS.md). Default: /api/daily-reward on the game's own origin. */
+  readonly VITE_DAILY_REWARD_API?: string;
   /** Fluent Connect app id (app_…) from the Fluent Dashboard. */
   readonly VITE_FLUENT_APP_ID?: string;
   /** Fluent Connect login client (client-…) issued by Fluent. */

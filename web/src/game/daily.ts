@@ -13,7 +13,8 @@
  * exception that is why the rods are part of the input: a Rare fish is asked for only when a rod the player owns
  * makes it likely enough.
  *
- * A challenge grants nothing yet: no PEARL, no energy (see DAILY_REWARD).
+ * A full day pays +4 energy, claimed by hand (game/dailyReward.ts). Single challenges pay nothing, and nothing
+ * here pays PEARL.
  */
 import { RODS, rodById, type TackleItem } from '../tackle/catalog';
 import { LOCATIONS, SPECIES, TUNING, special } from './content';
@@ -48,18 +49,19 @@ export const DAILY = {
 };
 
 /**
- * The reward a full set may give one day. Not implemented, and switched off: nothing is granted and the interface
- * offers no claim. Turning it on is not a client change. It needs somebody other than the player's browser to
- * check the day's catches (a contract or a trusted backend), to give it exactly once per player and day, and to
- * cap the energy at the bar. Client-side progress, a local save and the telemetry log are none of them proof.
+ * The reward for all three challenges of a day. Who checks the day and how the energy is given depends on where
+ * the game runs (game/dailyReward.ts): a verifier and a contract on the chain, the save in the local game.
+ * Progress shown in a browser, a local save and the telemetry log are never proof for the chain's reward.
  */
 export const DAILY_REWARD = {
-  enabled: false,
   /** For all three challenges of a day. */
   fullSet: { kind: 'energy' as const, amount: 4 },
+  /**
+   * Local game: the first UTC day that pays (24 November 2026). Days completed before it stay what they were, a
+   * badge and a streak. On the contracts the first day is set on the contract (`DailyRewards.firstDay`).
+   */
+  localFirstDay: 20_781,
 };
-/** What the reward would add to `energy` without ever going over the bar. */
-export const rewardEnergy = (energy: number, amount: number = DAILY_REWARD.fullSet.amount, max: number = TUNING.maxEnergy): number => Math.max(0, Math.min(max, energy + amount) - energy);
 
 // ------------------------------------------------------------------ what the player has
 
@@ -398,7 +400,7 @@ export function generateDaily(day: number, playerKey: string, profile: Profile):
 
 // ------------------------------------------------------------------ the local game's day
 
-export const freshDaily = (): DailyState => ({ day: 0, set: null, catches: [], streak: { day: 0, count: 0 } });
+export const freshDaily = (): DailyState => ({ day: 0, set: null, catches: [], streak: { day: 0, count: 0 }, rewards: { earned: [], claimed: [] } });
 
 /** The streak as of `today`: it lives while the last full day is today or yesterday. */
 export const streakOn = (streak: DailyState['streak'], today: number): number => (streak.count > 0 && (streak.day === today || streak.day === today - 1) ? streak.count : 0);
@@ -409,14 +411,49 @@ export function streakAfter(streak: DailyState['streak'], day: number): DailySta
   return { day, count: streak.day === day - 1 && streak.count > 0 ? streak.count + 1 : 1 };
 }
 
+/** The day numbers in a stored list, whatever else a hand-edited save put there. */
+const days = (raw: unknown): number[] => (Array.isArray(raw) ? [...new Set(raw.filter((x): x is number => Number.isInteger(x) && x > 0))] : []);
+/** Only today and yesterday can still be claimed, so nothing older is kept. */
+const recent = (list: number[], today: number): number[] => list.filter((d) => d === today || d === today - 1);
+
+/** The local game's reward book as of `today`: the days it still has to remember. */
+export function localRewards(d: Pick<DailyState, 'rewards'>, today: number): NonNullable<DailyState['rewards']> {
+  return { earned: recent(days(d.rewards?.earned), today), claimed: recent(days(d.rewards?.claimed), today) };
+}
+
+/** Is the stored day complete? Today's completion is read off the day itself; it is written down when the day turns. */
+const completeNow = (d: DailyState): boolean => !!d.set && d.set.day === d.day && setProgress(d.set, d.catches).complete;
+
+/** Local game: was `day` completed in full, as far as this save knows? Only a day from `localFirstDay` on can pay. */
+export function localEarned(d: DailyState, day: number): boolean {
+  if (day < DAILY_REWARD.localFirstDay) return false;
+  return (day === d.day && completeNow(d)) || days(d.rewards?.earned).includes(day);
+}
+export const localClaimed = (d: DailyState, day: number): boolean => days(d.rewards?.claimed).includes(day);
+
+/**
+ * Local game: writes down that the reward of `day` was taken. The rules (complete, unclaimed, in time, room in the
+ * bar) are the caller's (game/actions.ts, `claimDailyReward`); a day already written is not written twice.
+ */
+export function markLocalClaim(d: DailyState, day: number, today: number): DailyState {
+  const book = localRewards(d, today);
+  if (book.claimed.includes(day)) return d;
+  return { ...d, rewards: { earned: book.earned, claimed: recent([...book.claimed, day], today) } };
+}
+
 /**
  * The daily state as of `now`: a new UTC day starts with an empty list and a freshly drawn set, fixed for the day
  * from what the player has at that moment. Returns the same object when nothing had to change.
+ *
+ * When the day turns, a day that was completed is written into the reward book: its catches are dropped here, and
+ * its reward stays claimable for one more day.
  */
 export function rollDaily(d: DailyState, now: number, playerKey: string, profile: Profile): DailyState {
   const today = utcDay(now);
   if (d.day === today && d.set && d.set.version === DAILY.version && d.set.day === today) return d;
-  return { day: today, set: generateDaily(today, playerKey, profile), catches: d.day === today ? d.catches : [], streak: d.streak };
+  const book = localRewards(d, today);
+  const earned = d.day !== today && localEarned(d, d.day) ? recent([...book.earned, d.day], today) : book.earned;
+  return { day: today, set: generateDaily(today, playerKey, profile), catches: d.day === today ? d.catches : [], streak: d.streak, rewards: { earned: [...new Set(earned)], claimed: book.claimed } };
 }
 
 /** Adds a landed fish to the day. `profile` is what the player had before this fish, in case it is the day's first. */

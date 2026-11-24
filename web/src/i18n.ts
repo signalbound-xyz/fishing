@@ -48,4 +48,14 @@ export const ERRORS: Record<string, string> = {
   FeeTooHigh: 'Fee is too high',
   ReentrancyGuardReentrantCall: 'Reentrant call rejected',
   OwnableUnauthorizedAccount: 'Owner permission required',
+  // DailyRewards
+  NotActive: 'There is no energy reward for that day',
+  DayNotStarted: 'That day has not begun',
+  DayExpired: 'That reward has expired',
+  AuthorizationExpired: 'The authorization expired before it was sent. Claim again.',
+  WrongAmount: 'The authorization is not for this reward',
+  UnknownSigner: 'The authorization was not accepted. Claim again in a moment.',
+  ECDSAInvalidSignature: 'The authorization was not accepted. Claim again in a moment.',
+  ECDSAInvalidSignatureLength: 'The authorization was not accepted. Claim again in a moment.',
+  ECDSAInvalidSignatureS: 'The authorization was not accepted. Claim again in a moment.',
 };

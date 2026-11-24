@@ -12,6 +12,7 @@ import {Tournaments} from "../src/Tournaments.sol";
 import {PearlToken} from "../src/PearlToken.sol";
 import {FishNFT} from "../src/FishNFT.sol";
 import {GameLens} from "../src/GameLens.sol";
+import {DailyRewards, IEnergyBar} from "../src/DailyRewards.sol";
 
 /// @dev A later version of the game: new code and one more state variable, appended.
 contract FishingGameV2 is FishingGame {
@@ -446,6 +447,70 @@ contract UpgradeFromReleaseTest is TournamentsBase {
         assertEq(game.castOf(erin).targetBlock, 0, "the cast is settled");
         if (fish.nextId() > next) assertEq(fish.ownerOf(next), erin);
         assertEq(game.playerOf(erin).casts, 1);
+    }
+
+    /// @dev The released code has no way to add energy; the new code has one, switched off until the owner names
+    ///      the rewards contract. Switching it on and claiming touches the claimer's energy and nothing else.
+    function test_dailyRewardOnTopOfTheReleasedState() public {
+        (bool hasHook,) = address(game).staticcall(abi.encodeWithSignature("energyGranter()"));
+        assertFalse(hasHook, "the release already has the hook: this test starts from the wrong code");
+
+        // energy and its timer, player by player, as the released code left them
+        address[6] memory who = _players();
+        uint256[6] memory energy;
+        uint40[6] memory at;
+        for (uint256 i; i < who.length; i++) {
+            energy[i] = game.currentEnergy(who[i]);
+            at[i] = game.playerOf(who[i]).energyUpdatedAt;
+        }
+
+        _upgrade();
+        for (uint256 i; i < who.length; i++) {
+            assertEq(game.currentEnergy(who[i]), energy[i], "energy after the upgrade");
+            assertEq(game.playerOf(who[i]).energyUpdatedAt, at[i], "energy timer after the upgrade");
+        }
+        assertEq(game.energyGranter(), address(0), "the new slot is empty on the released state: nobody can add energy");
+        vm.prank(owner);
+        vm.expectRevert();
+        game.grantEnergy(alice, 4);
+
+        uint256 key = 0xDA117;
+        vm.startPrank(owner);
+        DailyRewards rewards = new DailyRewards(IEnergyBar(address(game)), owner);
+        rewards.setSigner(vm.addr(key), true);
+        rewards.setFirstDay(vm.getBlockTimestamp() / 1 days);
+        game.setEnergyGranter(address(rewards));
+        vm.stopPrank();
+
+        // bob has played on the released code; make room in his bar and claim
+        while (game.currentEnergy(bob) > 12) _fishOnce(bob, 0, keccak256(abi.encode("room", game.currentEnergy(bob))));
+        bytes32 world = _fishState();
+        bytes32 cups = _cupState();
+        FishingGame.Player memory before = game.playerOf(bob);
+        uint256 had = game.currentEnergy(bob);
+        uint256 pearls = pearl.balanceOf(bob);
+        bytes32[4] memory others = [_one(alice), _one(carol), _one(dave), _one(erin)];
+
+        uint256 day = vm.getBlockTimestamp() / 1 days;
+        uint256 deadline = vm.getBlockTimestamp() + 30 minutes;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, rewards.digest(bob, day, 1, 4, deadline));
+        vm.prank(bob);
+        rewards.claimDailyReward(day, DailyRewards.Authorization(1, 4, deadline, abi.encodePacked(r, s, v)));
+
+        assertEq(game.currentEnergy(bob), had + 4);
+        FishingGame.Player memory after_ = game.playerOf(bob);
+        (before.energy, before.energyUpdatedAt) = (after_.energy, after_.energyUpdatedAt);
+        assertEq(keccak256(abi.encode(after_)), keccak256(abi.encode(before)), "bob: only the energy moved");
+        assertEq(pearl.balanceOf(bob), pearls);
+        assertEq(_fishState(), world, "fish");
+        assertEq(_cupState(), cups, "tournaments");
+        bytes32[4] memory now_ = [_one(alice), _one(carol), _one(dave), _one(erin)];
+        for (uint256 i; i < 4; i++) assertEq(now_[i], others[i], "another player changed");
+        assertGt(_catch(bob, 5, 9_100), 0, "bob still fishes Golden Lake");
+    }
+
+    function _one(address who) internal view returns (bytes32) {
+        return keccak256(abi.encode(lens.playerView(who), pearl.balanceOf(who)));
     }
 
     function test_newCodeWithAnAppendedVariableRunsOnTheReleasedState() public {

@@ -14,6 +14,7 @@ import { LURES, RODS } from '../tackle/catalog';
 import { buyPearlOnChain, inventoryReadFor, loadChainSave, loadStandings, rememberCollection, rememberLocation, tx, type GameCall } from './chain';
 import { toast } from '../ui/toast';
 import { syncDaily } from './daily';
+import { claimRewardOnChain, syncReward } from './dailyReward';
 import { act, apply, getSave, replaceSave } from './state';
 import { track } from './telemetry';
 
@@ -36,6 +37,7 @@ export function refresh(): Promise<void> {
       if (s) replaceSave(s);
       // the day's challenges are read from the chain's events, after the state they are compared with
       if (s && who) void syncDaily(who, profileOf(s));
+      if (s && who) void syncReward(who);
     } catch (e) {
       console.warn('refresh failed', e);
       // the next refresh tries again; meanwhile the page shows what it has instead of waiting forever
@@ -195,6 +197,22 @@ export const ops = {
     if (index < 0) return undefined;
     const ok = await send('Claim reward', { functionName: 'claimAchievement', args: [BigInt(index)] });
     return ok ? list[index].reward : undefined;
+  },
+
+  /**
+   * The reward for a full day of challenges: +4 energy, once. Local game: an action on the save. On the contracts:
+   * the verifier's authorization and one transaction, then the state is read again, so the energy on screen is the
+   * chain's. Resolves to whether it was granted.
+   */
+  async claimDailyReward(day: number): Promise<boolean> {
+    if (!CHAIN) return apply((s) => A.claimDailyReward(s, day, Date.now()));
+    const me = state.wallet?.address;
+    const ok = await claimRewardOnChain(day);
+    if (ok && me) {
+      await refresh();
+      await syncReward(me);
+    }
+    return ok;
   },
 
   /**

@@ -15,7 +15,7 @@ import { fishingGameAbi } from '../abi';
 import { publicClient } from '../clients';
 import { CHAIN_ID, LOCAL_GAME, deployment } from '../config';
 import { DAILY, LOCAL_PLAYER, DAY_MS, generateDaily, profileOf, rollDaily, setProgress, streakOn, utcDay, type DailyChallenge, type DailySet, type DayCatch, type Profile, type SetProgress } from '../game/daily';
-import { DAY_SECONDS, emptyLog, firstBlockAt, profileBefore, readDay, streakFrom, type ChainReader, type DayEvent, type DayLog, type Head, type Streak } from '../game/dailyLog';
+import { DAY_SECONDS, emptyLog, firstBlockAt, profileBefore, readDay, setOf, streakFrom, type ChainReader, type DayEvent, type DayLog, type Head, type Streak } from '../game/dailyLog';
 import { currentTotals, landFish } from '../game/actions';
 import { emit, state } from '../store';
 import { commit, getSave } from './state';
@@ -123,6 +123,8 @@ interface ChainDay {
   stale: boolean;
   failed: boolean;
   streak: Streak | null;
+  /** Whether the day before was completed in full, once its log has been read to its end; null while unknown. */
+  yesterday: boolean | null;
 }
 let chainDay: ChainDay | null = null;
 let syncing: Promise<void> | null = null;
@@ -164,7 +166,7 @@ async function syncOnce(address: Address, profile: Profile): Promise<void> {
   const logs = loadLogs(me);
   if (!chainDay || chainDay.address !== me || chainDay.day !== day) {
     const cached = logs.get(day) ?? null;
-    chainDay = { address: me, day, log: cached, set: cached ? generateDaily(day, me, profileBefore(profile, [cached])) : null, stale: !!cached, failed: false, streak: null };
+    chainDay = { address: me, day, log: cached, set: cached ? generateDaily(day, me, profileBefore(profile, [cached])) : null, stale: !!cached, failed: false, streak: null, yesterday: null };
     emit();
   }
   const mine = chainDay;
@@ -218,6 +220,11 @@ async function countStreak(r: ChainReader, mine: ChainDay, profile: Profile, log
     earlier.push(log);
     streak = streakFrom(mine.address, profile, mine.log, earlier);
     if (chainDay !== mine) return;
+    if (back === 1) {
+      // yesterday's reward can still be claimed today: its set is drawn from what the player had when that day began
+      mine.yesterday = setProgress(setOf(log, mine.address, profileBefore(profile, [mine.log, log])), log.catches).complete;
+      emit();
+    }
   }
   if (chainDay !== mine) return;
   // a walk that ran out of days to look at, not out of completed ones, is a streak of "at least this many"
@@ -277,6 +284,16 @@ export function dailyView(now = Date.now()): DailyView {
   if (!c || c.address !== me || c.day !== day) return { ...none, status: 'loading' };
   if (!c.log || !c.set) return { ...none, status: c.failed ? 'error' : 'loading' };
   return { ...none, status: 'ready', set: c.set, catches: c.log.catches, progress: setProgress(c.set, c.log.catches), streak: c.streak?.count ?? null, streakOpen: !!c.streak?.open && c.streak.count >= STREAK_LOOKBACK, stale: c.stale };
+}
+
+/**
+ * On the contracts: was the day before `day` completed in full, as this device read it from the chain? Null while
+ * that is not known. It decides only whether a claim is offered; the verifier checks the day itself.
+ */
+export function yesterdayComplete(day: number): boolean | null {
+  const me = state.wallet?.address.toLowerCase();
+  const c = chainDay;
+  return c && me && c.address === me && c.day === day ? c.yesterday : null;
 }
 
 /** The challenges a given fish completed: done with it, not done without it. For the catch card. */

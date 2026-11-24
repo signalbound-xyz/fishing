@@ -17,7 +17,6 @@ import {
   progressLabel,
   progressOf,
   recordCatch,
-  rewardEnergy,
   rollDaily,
   setProgress,
   streakAfter,
@@ -437,16 +436,13 @@ describe('the day inside the save', () => {
   });
 });
 
-describe('the reward that is not there yet', () => {
-  it('is switched off', () => {
-    expect(DAILY_REWARD.enabled).toBe(false);
+describe('the reward for a full day', () => {
+  it('is four energy for the whole set, and nothing else', () => {
     expect(DAILY_REWARD.fullSet).toEqual({ kind: 'energy', amount: 4 });
   });
 
-  it('would never lift energy over the bar', () => {
-    expect(rewardEnergy(10)).toBe(4);
-    expect(rewardEnergy(TUNING.maxEnergy - 1)).toBe(1);
-    expect(rewardEnergy(TUNING.maxEnergy)).toBe(0);
-    expect(rewardEnergy(TUNING.maxEnergy + 5)).toBe(0);
+  it('has a first day in the local game: nothing before it pays', () => {
+    expect(Number.isInteger(DAILY_REWARD.localFirstDay)).toBe(true);
+    expect(new Date(DAILY_REWARD.localFirstDay * 86_400_000).toISOString()).toBe('2026-11-24T00:00:00.000Z');
   });
 });
