@@ -164,7 +164,7 @@ function render(on: HeaderHandlers): HTMLElement[] {
   const s = getSave();
   const now = Date.now();
   const wait = loading(now);
-  const page = location.hash === '#/tackle' ? 'tackle' : location.hash === '#/cup' ? 'cup' : location.hash === '#/profile' ? 'profile' : location.hash === '#/stats' ? 'debug' : 'pond';
+  const page = location.hash === '#/tackle' ? 'tackle' : location.hash === '#/hunt' ? 'hunt' : location.hash === '#/cup' ? 'cup' : location.hash === '#/profile' ? 'profile' : location.hash === '#/stats' ? 'debug' : 'pond';
   const link = (id: string, text: string, href: string): HTMLElement =>
     h('a', { class: page === id ? 'active' : '', text, attrs: { href, ...(page === id ? { 'aria-current': 'page' } : {}) } });
   const level = levelOf(s.xp);
@@ -186,7 +186,7 @@ function render(on: HeaderHandlers): HTMLElement[] {
       h('span', { class: 'logo' }, icon('bobber')),
       h('span', { class: 'wordmark' }, h('span', { class: 'wm-top', text: 'Onchain' }), h('span', { class: 'wm-main', text: 'Fishing' })),
     ),
-    h('nav', { class: 'topnav', attrs: { 'aria-label': 'Pages' } }, link('pond', 'Pond', '#/'), link('tackle', 'Tackle', '#/tackle'), link('cup', 'Cup', '#/cup'), link('profile', 'Stats', '#/profile')),
+    h('nav', { class: 'topnav', attrs: { 'aria-label': 'Pages' } }, link('pond', 'Pond', '#/'), link('hunt', 'Season Hunt', '#/hunt'), link('tackle', 'Tackle', '#/tackle'), link('cup', 'Tournaments', '#/cup'), link('profile', 'Stats', '#/profile')),
     timeSwitch(),
   ];
   if (wait) return [...head, loadingStats(on, shape ?? DEFAULT_SHAPE)];

@@ -13,6 +13,8 @@ import {PearlToken} from "../src/PearlToken.sol";
 import {FishNFT} from "../src/FishNFT.sol";
 import {GameLens} from "../src/GameLens.sol";
 import {DailyRewards, IEnergyBar} from "../src/DailyRewards.sol";
+import {SeasonHunt} from "../src/SeasonHunt.sol";
+import {BlockhashBeacon} from "../src/HuntBeacon.sol";
 
 /// @dev A later version of the game: new code and one more state variable, appended.
 contract FishingGameV2 is FishingGame {
@@ -512,6 +514,105 @@ contract UpgradeFromReleaseTest is TournamentsBase {
 
     function _one(address who) internal view returns (bytes32) {
         return keccak256(abi.encode(lens.playerView(who), pearl.balanceOf(who)));
+    }
+
+    /// @dev The season hunt is a contract of its own behind one new slot of the game (`seasonHunt`). On the
+    ///      released state the slot is empty and the hook is shut; once the hunt is attached, a seasonal cast of
+    ///      a player who played on the released code costs what a cast costs and moves nothing else, the prize and
+    ///      the trophy reach the winner, and every fish, tournament and other player is as the release left it.
+    function test_seasonHuntOnTopOfTheReleasedState() public {
+        (bool hasHook,) = address(game).staticcall(abi.encodeWithSignature("seasonHunt()"));
+        assertFalse(hasHook, "the released code has no hunt hook: this test is about adding it");
+
+        bytes32 gameBefore = _gameState();
+        _upgrade();
+        assertEq(_gameState(), gameBefore, "the upgrade alone changed a player");
+        assertEq(game.seasonHunt(), address(0), "the new slot is empty on the released state");
+        vm.prank(owner);
+        vm.expectRevert();
+        game.castFor(bob, 0);
+        vm.prank(owner);
+        vm.expectRevert();
+        game.landFor(bob, FishNFT.Fish(9, 50_000, 0, 4, uint40(vm.getBlockTimestamp()), bob));
+
+        vm.startPrank(owner);
+        SeasonHunt hunt = new SeasonHunt(game, fish, IERC20(address(blend)), new BlockhashBeacon(), owner);
+        game.setSeasonHunt(address(hunt));
+        SeasonHunt.Rules memory r;
+        r.name = "The Stray Taimen";
+        r.start = uint40(vm.getBlockTimestamp() + 1 hours);
+        r.end = r.start + 7 days;
+        r.speciesId = 9;
+        r.waters = 0x21; // the Village Pond and Golden Lake
+        r.dailyAttempts = 20;
+        r.settleWindow = 200;
+        r.baseChance = 100_000_000;
+        r.prize = 1_000 ether;
+        uint256 id = hunt.create(r);
+        blend.mint(owner, r.prize);
+        blend.approve(address(hunt), r.prize);
+        hunt.fund(id);
+        vm.stopPrank();
+        vm.warp(r.start);
+        vm.roll(vm.getBlockNumber() + 10);
+
+        bytes32 world = _fishState();
+        bytes32 cups = _cupState();
+        bytes32[5] memory others = [_still(alice), _still(carol), _still(dave), _still(erin), _still(frank)];
+        FishingGame.Player memory before = game.playerOf(bob);
+        uint256 energy = game.currentEnergy(bob);
+        uint256 pearls = pearl.balanceOf(bob);
+        uint256 fishCount = fish.totalSupply();
+
+        // bob opened Golden Lake on the released code, and casts there for the season
+        vm.prank(bob);
+        uint64 seq = hunt.cast(id, 5);
+        uint256 target = vm.getBlockNumber() + 2;
+        vm.roll(target + 1);
+        for (uint256 i;; i++) {
+            vm.setBlockhash(target, keccak256(abi.encode("hunt", i)));
+            if (hunt.outcome(id, seq, "")) break;
+        }
+        hunt.settle(id, seq, "");
+
+        FishingGame.Player memory after_ = game.playerOf(bob);
+        assertEq(after_.casts, before.casts + 1);
+        assertEq(game.currentEnergy(bob), energy - 2, "Golden Lake costs two energy, through the hunt as well");
+        (before.casts, before.energy, before.energyUpdatedAt) = (after_.casts, after_.energy, after_.energyUpdatedAt);
+        assertEq(keccak256(abi.encode(after_)), keccak256(abi.encode(before)), "bob: only the cast and its energy moved");
+        assertEq(pearl.balanceOf(bob), pearls);
+        assertEq(_fishState(), world, "fish");
+        assertEq(_cupState(), cups, "tournaments");
+
+        // the ordinary catch of that cast is landed by the game as always
+        vm.prank(bob);
+        game.reel();
+
+        bytes32[5] memory now_ = [_still(alice), _still(carol), _still(dave), _still(erin), _still(frank)];
+        for (uint256 i; i < 5; i++) assertEq(now_[i], others[i], "another player changed with the cast");
+
+        vm.warp(vm.getBlockTimestamp() + 201); // the window of the hit closes
+        uint256 had = blend.balanceOf(bob);
+        vm.prank(bob);
+        hunt.claim(id);
+        assertEq(blend.balanceOf(bob) - had, r.prize);
+        uint256 trophy = hunt.season(id).trophyId;
+        assertEq(fish.ownerOf(trophy), bob);
+        assertEq(fish.fish(trophy).speciesId, 9);
+        assertEq(fish.fish(trophy).spotId, 5);
+        assertLe(fish.totalSupply(), fishCount + 2, "the catch of the cast, and the trophy");
+        assertEq(pearl.balanceOf(bob), pearls, "no PEARL comes with a prize");
+
+        now_ = [_still(alice), _still(carol), _still(dave), _still(erin), _still(frank)];
+        for (uint256 i; i < 5; i++) assertEq(now_[i], others[i], "another player changed with the prize");
+        assertGt(_catch(bob, 5, 9_200), 0, "bob still fishes Golden Lake");
+    }
+
+    /// @dev A player as the game holds them, without the clock and the block number a lens view carries.
+    function _still(address who) internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(game.playerOf(who), game.castOf(who), pearl.balanceOf(who), fish.balanceOf(who), blend.balanceOf(who))
+        );
     }
 
     function test_newCodeWithAnAppendedVariableRunsOnTheReleasedState() public {

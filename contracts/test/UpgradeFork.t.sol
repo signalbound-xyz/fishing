@@ -11,6 +11,11 @@ import {GameLens} from "../src/GameLens.sol";
 import {Upgrade} from "../script/Upgrade.s.sol";
 import {DailyRewards} from "../src/DailyRewards.sol";
 import {DailyRewardsScript} from "../script/DailyRewards.s.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SeasonHunt} from "../src/SeasonHunt.sol";
+import {DrandBeacon} from "../src/DrandBeacon.sol";
+import {SeasonHuntScript} from "../script/SeasonHunt.s.sol";
 
 /// @notice The rehearsal of an upgrade on the real thing: a fork of a live network. The proxies there are pointed at
 ///         the current source, and every player the chain knows, every fish and every tournament must read exactly
@@ -261,6 +266,127 @@ contract UpgradeForkTest is Test {
 
     /// @dev Casts at the pond for `who` until four points of the bar are free. External, so that a player who
     ///      cannot cast is skipped instead of failing the rehearsal.
+    /// @dev A round the drand "evmnet" network really made (fetched from api.drand.sh on 24 November 2026).
+    uint64 internal constant DRAND_ROUND = 22_669_154;
+    bytes internal constant DRAND_SIGNATURE =
+        hex"1de93aa84022198f0bf1246c29275fe8b247028ec03807bf624227560863607e166e035dda17e7a0dc2c2cf496ea3afbc7eb7122ab88fbaba67ab4d07a8ac4cd";
+    bytes32 internal constant DRAND_RANDOMNESS = 0xa5a3bdc9c0bffab8d41349329a6a97d206b4c8ebd119e18b934f2272d58c1845;
+
+    /// @dev What the game, the tokens and the fish hold for a player, without anything that moves with the clock.
+    function _holdings(address who, IERC20 blend) internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(game.playerOf(who), game.castOf(who), pearl.balanceOf(who), fish.balanceOf(who), blend.balanceOf(who))
+        );
+    }
+
+    /// @dev Season Hunt on the real state, after the game is upgraded by the real script. Where the game does not
+    ///      listen to a hunt yet, one is deployed on the drand beacon and attached by `script/SeasonHunt.s.sol`,
+    ///      as the game's owner; where it already does, the upgrade must leave it attached and that one is used.
+    ///      A season is announced from the repository's season file and funded with the network's own BLEND; a
+    ///      newcomer's cast, bound to a round drand really made, hooks the target, is recorded by a stranger and
+    ///      claimed. The clock is moved to that round's time for it. Nobody else's holdings may move.
+    function test_seasonHuntOnTheForkAfterTheUpgrade() public onFork {
+        (bool hasHook, bytes memory out) = address(game).staticcall(abi.encodeWithSignature("seasonHunt()"));
+        address live = hasHook ? abi.decode(out, (address)) : address(0);
+        _upgrade();
+        assertEq(game.seasonHunt(), live, "the upgrade changed who may cast for players");
+
+        SeasonHuntScript script = new SeasonHuntScript();
+        SeasonHunt hunt = live == address(0) ? script.rehearse(game.owner(), "drand") : SeasonHunt(live);
+        assertEq(game.seasonHunt(), address(hunt));
+        assertEq(address(hunt.game()), address(game), "the hunt belongs to another game");
+        assertEq(address(hunt.fishNft()), address(fish));
+        DrandBeacon drand = DrandBeacon(address(hunt.beacon()));
+        assertTrue(drand.unbiasable(), "this rehearsal is for a hunt on the drand beacon");
+        assertEq(drand.verify(DRAND_ROUND, DRAND_SIGNATURE), DRAND_RANDOMNESS);
+
+        IERC20 blend = hunt.blend();
+        bytes32[] memory before = new bytes32[](players.length);
+        for (uint256 i; i < players.length; i++) before[i] = _holdings(players[i], blend);
+        uint256 supply = pearl.totalSupply();
+        uint256 escrow = hunt.escrowed();
+        uint256 held = blend.balanceOf(address(hunt));
+
+        // the season of the repository, running at the moment a cast is bound to the known round
+        uint256 castAt = drand.timeOf(DRAND_ROUND) - drand.margin();
+        vm.warp(castAt - 1 hours);
+        SeasonHunt.Rules memory r =
+            script.rules("stray-taimen", castAt - 30 minutes, IERC20Metadata(address(blend)).decimals());
+        vm.prank(hunt.owner());
+        uint256 id = hunt.create(r);
+        address sponsor = makeAddr("fork sponsor");
+        deal(address(blend), sponsor, r.prize);
+        vm.startPrank(sponsor);
+        blend.approve(address(hunt), r.prize);
+        hunt.fund(id);
+        vm.stopPrank();
+        assertEq(hunt.escrowed(), escrow + r.prize);
+        assertEq(blend.balanceOf(address(hunt)), held + r.prize);
+
+        // a newcomer with the free rod at the pond whose first attempt the round decides in their favour
+        vm.warp(castAt);
+        address lucky;
+        for (uint256 i;; i++) {
+            lucky = makeAddr(string.concat("fork hunter ", vm.toString(i)));
+            uint256 draw = uint256(
+                keccak256(abi.encode(DRAND_RANDOMNESS, block.chainid, address(hunt), id, uint64(0), lucky))
+            );
+            if (draw % 1e9 < r.baseChance) break;
+        }
+        uint256 casts = game.totalCasts();
+        vm.prank(lucky);
+        uint64 seq = hunt.cast(id, 0);
+        assertEq(seq, 0);
+        assertEq(game.totalCasts(), casts + 1, "a seasonal cast is a cast of the game");
+        assertEq(game.currentEnergy(lucky), 19, "the pond's energy was not charged");
+        uint64 target = game.castOf(lucky).targetBlock;
+        assertGt(target, 0);
+        assertEq(hunt.chance(id, 0, 0, 0), r.baseChance);
+
+        // the round is not made yet; once it is, anybody records the hit
+        vm.expectRevert(DrandBeacon.BadProof.selector);
+        hunt.settle(id, seq, "");
+        vm.warp(castAt + drand.margin() + 5);
+        assertTrue(hunt.outcome(id, seq, DRAND_SIGNATURE));
+        vm.prank(makeAddr("fork stranger"));
+        hunt.settle(id, seq, DRAND_SIGNATURE);
+        assertEq(uint8(hunt.status(id)), uint8(SeasonHunt.Status.WinnerFound));
+
+        // the ordinary catch of that cast is landed by the game as ever
+        vm.roll(target + 1);
+        vm.setBlockhash(target, keccak256("fork hunt"));
+        vm.prank(lucky);
+        game.reel();
+        assertEq(game.castOf(lucky).targetBlock, 0);
+
+        // not final inside the window; after it the prize and the trophy
+        vm.prank(lucky);
+        vm.expectRevert(SeasonHunt.NotFinal.selector);
+        hunt.claim(id);
+        vm.warp(castAt + r.settleWindow + 1);
+        uint256 fishBefore = fish.balanceOf(lucky);
+        vm.prank(lucky);
+        assertEq(hunt.claim(id), r.prize);
+        assertEq(blend.balanceOf(lucky), r.prize);
+        assertEq(hunt.escrowed(), escrow);
+        assertEq(blend.balanceOf(address(hunt)), held);
+        assertEq(fish.balanceOf(lucky), fishBefore + 1);
+        uint256 trophy = hunt.season(id).trophyId;
+        assertEq(fish.ownerOf(trophy), lucky);
+        assertEq(fish.fish(trophy).speciesId, r.speciesId);
+        assertGt(game.fishValue(trophy), 0);
+        vm.prank(lucky);
+        vm.expectRevert(SeasonHunt.AlreadyClaimed.selector);
+        hunt.claim(id);
+
+        for (uint256 i; i < players.length; i++) {
+            assertEq(_holdings(players[i], blend), before[i], string.concat("the hunt moved ", vm.toString(players[i])));
+        }
+        assertEq(pearl.totalSupply(), supply, "the hunt minted PEARL");
+        emit log_named_address("hunt", address(hunt));
+        emit log_named_uint("players untouched", players.length);
+    }
+
     function makeRoom(address who) external {
         for (uint256 i; game.currentEnergy(who) > 16; i++) {
             uint64 pending = game.castOf(who).targetBlock;

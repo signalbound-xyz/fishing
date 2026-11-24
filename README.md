@@ -1,6 +1,6 @@
 # Onchain Fishing 🎣
 
-A fishing game that runs in smart contracts: casting, fair randomness, rods and lures, catches as NFTs with onchain art, the PEARL currency, a species collection, special fish that unlock new waters, and a weekly championship.
+A fishing game that runs in smart contracts: casting, fair randomness, rods and lures, catches as NFTs with onchain art, the PEARL currency, a species collection, special fish that unlock new waters, a weekly championship, tournaments, and Season Hunt: one prize fish that the first angler to hook it wins.
 
 Hypothesis results for the first version are in **[REPORT.md](REPORT.md)**; the current balance is in [web/BALANCE.md](web/BALANCE.md).
 
@@ -8,7 +8,8 @@ Hypothesis results for the first version are in **[REPORT.md](REPORT.md)**; the 
 
 | Folder | Contents |
 |---|---|
-| `contracts/` | Foundry project: `FishingGame` and `Tournaments` (both behind upgradeable proxies), `FightVerifier`, `BottlePool`, `GameLens`, `FishNFT`, `PearlToken`, `PearlExchange`, `Marketplace` + 113 tests, upgrade tooling ([UPGRADES.md](contracts/UPGRADES.md)) |
+| `contracts/` | Foundry project: `FishingGame` and `Tournaments` (both behind upgradeable proxies), `FightVerifier`, `BottlePool`, `GameLens`, `FishNFT`, `PearlToken`, `PearlExchange`, `Marketplace`, `DailyRewards`, `SeasonHunt` with its randomness beacons + 241 tests (6 of them on a fork of the live network), upgrade tooling ([UPGRADES.md](contracts/UPGRADES.md)) |
+| `contracts/script/SeasonHunt.s.sol`, `contracts/script/seasons/` | deploying the hunt, announcing and funding a season; a season is a JSON file |
 | `contracts/script/GameSetup.sol` | catalog: species, locations, rods, lures, special fish, achievements, config |
 | `sim/` | model of the first version's formulas and an agent-based economy simulation (Python) |
 | `web/` | browser client (Vite + TypeScript + viem), see [web/README.md](web/README.md) |
@@ -98,6 +99,18 @@ TARGET=game forge script script/Upgrade.s.sol --rpc-url fluent_testnet --broadca
 
 `PearlToken`, `FishNFT`, the market and the exchange are plain contracts and are never replaced. Whoever owns the proxies can change the rules, so on a mainnet the owner should be a multisig with a delay.
 
+## Season Hunt
+
+The main competition: a season names one target fish and holds one BLEND prize, and the first angler to hook the fish takes all of it. A season runs for a set time (seven days in the first one), entry is free, and a wallet gets a set number of seasonal casts per UTC day (20). The prize is in the contract before the season can start.
+
+A seasonal cast is an ordinary cast made through the hunt (`SeasonHunt.cast`): the game charges the same energy, wears the same rod, uses the same lure and lands the same ordinary catch. On top of it the hunt makes one separate draw for the target. Its chance is the season's base chance plus the bonuses of the rod, the lure and the water, added and capped (three times the base at most in the first season), so better tackle helps and nothing guarantees the fish. Ordinary fishing odds are not touched.
+
+The winner is the earliest cast that hooked the target, by the order in which casts were executed on the chain, not whoever reports first: anyone can record a hit for anyone, an earlier hit recorded later takes the catch over, and a hit is final when its recording window has passed. The winner claims the prize and a trophy fish of the target species, a real `FishNFT`. If nobody hooks it, the sponsor takes the prize back or rolls it into the next season.
+
+The draw uses the [drand](https://drand.love) randomness beacon, whose signatures the contract verifies on the chain, because no VRF provider serves Fluent today and a block hash is the sequencer's to choose. The hunt is a contract of its own behind a small hook in `FishingGame` (`castFor`, `landFor`).
+
+**It is built and tested and not deployed yet.** A free season is also open to anybody who runs many wallets, so until that is solved it is for testnet prizes only. The design, the security assessment, the deployment steps and what a public launch needs are in [SEASON_HUNT.md](SEASON_HUNT.md); the simulated odds are in [web/SEASON_HUNT_BALANCE.md](web/SEASON_HUNT_BALANCE.md) (`cd web && pnpm sim:hunt`).
+
 ## Tournaments
 
 Short events with a BLEND prize pool where the fight decides the score. Each tournament is fished with one rod and only players who own that rod in the game may enter (everyone owns the first one), so everyone fishes the same water with the same tackle and the same number of casts; every cast hooks a fish (which one is the block-hash draw); the player gets one fight at it. The browser records the fight as one bit per 50 ms tick, and `Tournaments.reel(id, inputs)` replays the recording in `FightVerifier` and scores the catch: half the fish's points for landing it, up to all of them by the share of the fight spent in the green. The score of a tournament is the sum of the best `counted` catches; ties go to whoever got there first; the top three share the prize pool 50 / 30 / 20 and claim it themselves.
@@ -167,7 +180,7 @@ Rods already bought stay bought. Upgrading the game (`TARGET=game`, above) runs 
 
 Decided on, not built yet:
 
-- **Diving, as a location of its own.** A push-your-luck dive instead of a cast: a ticket buys a fixed number of moves on a hidden board, corals pay, whirlpools cost a life, and the diver chooses when to surface with what they have. What a ticket costs and what the corals pay is open. It would be a contract of its own beside the game (`FishingGame` is 240 bytes under the 24,576-byte limit).
+- **Diving, as a location of its own.** A push-your-luck dive instead of a cast: a ticket buys a fixed number of moves on a hidden board, corals pay, whirlpools cost a life, and the diver chooses when to surface with what they have. What a ticket costs and what the corals pay is open. It would be a contract of its own beside the game (`FishingGame` is 283 bytes under the 24,576-byte limit).
 - **Lures for one fish.** A lure that raises the pool weight of a single species (today's lures lift every rarer species at once): the tool for filling the collection and for chasing one prize fish. It changes how a cast is drawn, so it needs room in `FishingGame` first.
 - **Aquarium.** Fish given to a personal collection instead of sold, shown the way the trophies are now, with a level per species. A fish given away is PEARL that is never minted, which slows progression without raising a price.
 

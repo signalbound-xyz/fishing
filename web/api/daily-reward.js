@@ -563,6 +563,21 @@ var fishingGameAbi = [
 	},
 	{
 		"type": "function",
+		"name": "castFor",
+		"inputs": [{
+			"name": "player",
+			"type": "address",
+			"internalType": "address"
+		}, {
+			"name": "locationId",
+			"type": "uint8",
+			"internalType": "uint8"
+		}],
+		"outputs": [],
+		"stateMutability": "nonpayable"
+	},
+	{
+		"type": "function",
 		"name": "castOf",
 		"inputs": [{
 			"name": "who",
@@ -893,6 +908,53 @@ var fishingGameAbi = [
 			"internalType": "bool"
 		}],
 		"stateMutability": "view"
+	},
+	{
+		"type": "function",
+		"name": "landFor",
+		"inputs": [{
+			"name": "player",
+			"type": "address",
+			"internalType": "address"
+		}, {
+			"name": "f",
+			"type": "tuple",
+			"internalType": "struct FishNFT.Fish",
+			"components": [
+				{
+					"name": "speciesId",
+					"type": "uint16",
+					"internalType": "uint16"
+				},
+				{
+					"name": "weight",
+					"type": "uint32",
+					"internalType": "uint32"
+				},
+				{
+					"name": "spotId",
+					"type": "uint8",
+					"internalType": "uint8"
+				},
+				{
+					"name": "quality",
+					"type": "uint8",
+					"internalType": "uint8"
+				},
+				{
+					"name": "caughtAt",
+					"type": "uint40",
+					"internalType": "uint40"
+				},
+				{
+					"name": "angler",
+					"type": "address",
+					"internalType": "address"
+				}
+			]
+		}],
+		"outputs": [],
+		"stateMutability": "nonpayable"
 	},
 	{
 		"type": "function",
@@ -1515,6 +1577,17 @@ var fishingGameAbi = [
 	},
 	{
 		"type": "function",
+		"name": "seasonHunt",
+		"inputs": [],
+		"outputs": [{
+			"name": "",
+			"type": "address",
+			"internalType": "address"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
 		"name": "sellFish",
 		"inputs": [{
 			"name": "fishIds",
@@ -1683,6 +1756,17 @@ var fishingGameAbi = [
 				"internalType": "uint16"
 			}
 		],
+		"outputs": [],
+		"stateMutability": "nonpayable"
+	},
+	{
+		"type": "function",
+		"name": "setSeasonHunt",
+		"inputs": [{
+			"name": "hunt",
+			"type": "address",
+			"internalType": "address"
+		}],
 		"outputs": [],
 		"stateMutability": "nonpayable"
 	},

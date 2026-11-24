@@ -4244,3 +4244,564 @@ button.link {
     font-size: 19px;
   }
 }
+
+/* ============================================================ season hunt
+   One fish, one prize: the hunt has a colour of its own (the gold of a legendary fish), so that a seasonal
+   cast is never mistaken for an ordinary one. */
+.hunt {
+  --hunt: var(--r4);
+  --hunt-wash: color-mix(in srgb, var(--r4) 12%, var(--panel));
+  --hunt-line: color-mix(in srgb, var(--r4) 50%, var(--panel));
+}
+.hunt-off {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  padding: 24px;
+}
+.hunt-off h2,
+.hunt-card h2 {
+  margin: 0;
+}
+.hunt-off p {
+  margin: 0;
+  max-width: 62ch;
+}
+.hunt-kicker {
+  font: 600 11px/1 var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--r4);
+}
+.hunt-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+}
+.hunt-card h3,
+.hunt-side h3 {
+  margin: 0;
+}
+.hunt-card p {
+  margin: 0;
+}
+.hunt-pill {
+  display: inline-block;
+  padding: 5px 8px 4px;
+  font: 600 11px/1 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-2);
+  background: var(--panel-3);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.hunt-pill.hunt-active {
+  color: var(--ink);
+  background: var(--ok);
+  box-shadow: none;
+}
+.hunt-pill.hunt-upcoming {
+  color: var(--accent-hi);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.hunt-pill.hunt-closing {
+  color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.hunt-pill.hunt-winner {
+  color: var(--ink);
+  background: var(--r4);
+  box-shadow: none;
+}
+.hunt-pill.hunt-expired,
+.hunt-pill.hunt-cancelled {
+  color: var(--dim);
+}
+.hunt-hero {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--hunt-line);
+}
+.hunt-hero-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.hunt-hero-body {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.hunt-target {
+  display: grid;
+  gap: 8px;
+}
+.hunt-art {
+  box-shadow: inset 0 0 0 2px var(--r4);
+  background: var(--bg-deep);
+}
+.hunt-target-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.hunt-target-name .k,
+.hunt-where .k,
+.hunt-row .k,
+.hunt-prize .k,
+.hunt-when .k {
+  font: 600 11px/1.2 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.hunt-target-name .k {
+  width: 100%;
+}
+.hunt-hero-text {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.hunt-hero-text h2 {
+  font-size: 26px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.hunt-desc {
+  color: var(--text-2);
+  max-width: 60ch;
+}
+.hunt-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.hunt-prize,
+.hunt-when {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  min-width: 0;
+}
+.hunt-prize {
+  box-shadow: inset 0 0 0 1px var(--hunt-line);
+}
+.hunt-prize .v,
+.hunt-when .v {
+  font: 700 22px/1.1 var(--font-px);
+  color: var(--r4);
+  font-variant-numeric: tabular-nums;
+}
+.hunt-when .v {
+  color: var(--accent-hi);
+}
+.hunt-prize .v small {
+  font: 600 12px/1 var(--font-body);
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.hunt-prize .d {
+  font-size: 12px;
+  color: var(--muted);
+}
+.hunt-where {
+  display: grid;
+  gap: 8px;
+}
+.hunt-waters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hunt-water {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 9px 5px;
+  font: 600 12px/1 var(--font-body);
+  color: var(--text-2);
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.hunt-water em {
+  font-style: normal;
+  color: var(--r4);
+}
+.hunt-water.locked {
+  color: var(--dim);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.hunt-entry {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--muted);
+}
+.hunt-entry li::before {
+  content: '· ';
+  color: var(--dim);
+}
+.hunt-cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  padding-top: 2px;
+}
+.hunt-go {
+  font-size: 15px;
+  padding: 12px 20px 11px;
+  background: var(--r4);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--r4) 70%, #fff), 0 0 0 3px var(--bg-deep), inset 0 -2px 0 color-mix(in srgb, var(--r4) 65%, #000);
+  white-space: normal;
+  text-align: left;
+}
+.hunt-go:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--r4) 80%, #fff);
+}
+.hunt-left {
+  font: 600 12px/1.3 var(--font-body);
+  color: var(--muted);
+}
+.hunt-hit {
+  align-items: flex-start;
+  background: var(--hunt-wash);
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--r4);
+}
+.hunt-hit b {
+  font-size: 16px;
+  color: var(--r4);
+}
+.hunt-result.final {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--hunt-line);
+}
+.hunt-result.mine h3 {
+  color: var(--r4);
+}
+.hunt-result .btn {
+  align-self: flex-start;
+}
+.hunt-row {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding-bottom: 8px;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.hunt-you {
+  margin-left: 8px;
+  padding: 2px 5px 1px;
+  font: 600 10px/1 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: var(--r4);
+}
+.hunt-rules ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-2);
+  max-width: 78ch;
+}
+.hunt-rng {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.hunt-rng.warn {
+  color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.hunt-side {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 16px;
+}
+.hunt-tackle,
+.hunt-history {
+  display: grid;
+  gap: 10px;
+}
+.hunt-tackle p,
+.hunt-also {
+  margin: 0;
+}
+.hunt-odds {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.hunt-odds .tk-big .v {
+  color: var(--r4);
+  font-size: 20px;
+}
+.hunt-parts {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.hunt-opts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.hunt-opts h4 {
+  margin: 0 0 6px;
+  font: 600 11px/1 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.hunt-opts ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hunt-opt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'n b'
+    'note b';
+  gap: 0 8px;
+  align-items: center;
+  padding: 6px 8px 5px;
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  font-size: 12px;
+}
+.hunt-opt .n {
+  grid-area: n;
+  color: var(--text-2);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hunt-opt .note {
+  grid-area: note;
+  min-height: 14px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.hunt-opt .b {
+  grid-area: b;
+  font: 700 13px/1 var(--font-px);
+  color: var(--r4);
+}
+.hunt-opt .b.zero {
+  color: var(--dim);
+}
+.hunt-opt.on {
+  box-shadow: inset 0 0 0 1px var(--r4);
+}
+.hunt-opt.on .note {
+  color: var(--r4);
+}
+.hunt-opt.locked .n {
+  color: var(--dim);
+}
+.hunt-past-list {
+  display: grid;
+  gap: 6px;
+}
+.hunt-past {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hunt-past:hover {
+  background: var(--panel-3);
+}
+.hunt-past:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.hunt-past.sel {
+  box-shadow: inset 0 0 0 1px var(--r4);
+}
+.hunt-past-art {
+  width: 40px;
+}
+.hunt-past-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.hunt-past-main b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+.hunt-past-end {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+}
+.hunt-also {
+  font-size: 12px;
+  color: var(--muted);
+}
+.hunt-clock {
+  font-variant-numeric: tabular-nums;
+}
+
+/* the hunt at the pond: the strip under the Cast button */
+.hunt-strip {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.hunt-strip.on {
+  background: color-mix(in srgb, var(--r4) 9%, var(--panel-2));
+  box-shadow: inset 0 0 0 1px var(--r4);
+}
+.hunt-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.hunt-strip-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+}
+.hunt-strip-name:hover b {
+  text-decoration: underline;
+}
+.hunt-strip-prize {
+  font: 700 13px/1 var(--font-px);
+  color: var(--r4);
+}
+.hunt-strip-line {
+  font: 600 12px/1.35 var(--font-body);
+  color: var(--text-2);
+}
+.hunt-strip-line.warn {
+  color: var(--warn);
+}
+.hunt-strip-last {
+  font-size: 12px;
+  color: var(--muted);
+}
+.hunt-strip-last.win {
+  color: var(--r4);
+  font-weight: 600;
+}
+.hunt-strip-hit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-top: 6px;
+  box-shadow: inset 0 1px 0 var(--r4);
+  color: var(--r4);
+}
+.hunt-switch.on {
+  color: var(--ink);
+  background: var(--r4);
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 -2px 0 color-mix(in srgb, var(--r4) 65%, #000);
+  font-weight: 600;
+}
+.hunt-switch.on:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--r4) 80%, #fff);
+  color: var(--ink);
+}
+/* a seasonal cast is not an ordinary one, and the button says so before it is pressed */
+.btn-cast.btn-hunt:not(:disabled) {
+  background: var(--r4);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--r4) 70%, #fff), 0 0 0 4px var(--bg-deep), inset 0 -4px 0 color-mix(in srgb, var(--r4) 65%, #000), inset 0 2px 0 color-mix(in srgb, var(--r4) 55%, #fff);
+}
+.btn-cast.btn-hunt:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--r4) 82%, #fff);
+}
+
+@media (max-width: 1280px) {
+  .hunt-opts {
+    grid-template-columns: 1fr;
+  }
+}
+/* one column of cards: the side column is as wide as the page again */
+@media (max-width: 980px) {
+  .hunt-opts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 720px) {
+  .hunt-card {
+    padding: 14px 12px;
+  }
+  .hunt-hero-body {
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .hunt-hero-text h2 {
+    font-size: 21px;
+  }
+  .hunt-facts {
+    grid-template-columns: 1fr;
+  }
+  .hunt-prize .v,
+  .hunt-when .v {
+    font-size: 19px;
+  }
+  .hunt-opts {
+    grid-template-columns: 1fr;
+  }
+  .hunt-row {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+  .hunt-go {
+    width: 100%;
+  }
+  .topnav {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .topnav a {
+    white-space: nowrap;
+  }
+}

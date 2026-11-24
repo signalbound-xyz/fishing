@@ -8,6 +8,7 @@ import { h } from '../ui/dom';
 import { toast } from '../ui/toast';
 import { initCollection } from './ui/collection';
 import { initCup, tickCup } from './ui/cup';
+import { initHunt, tickHunt } from './ui/hunt';
 import { dailyBadge, initDaily } from './ui/daily';
 import { initLocalHeader, tickLocalHeader } from './ui/header';
 import { initKeepnet } from './ui/keepnet';
@@ -88,6 +89,7 @@ function selectTab(k: Tab): void {
 
 const tackleEl = h('main', { class: 'tackle hidden' });
 const cupEl = h('main', { class: 'layout cup hidden' });
+const huntEl = h('main', { class: 'layout hunt hidden' });
 const statsEl = h('main', { class: 'playstats hidden' });
 const profileEl = h('main', { class: 'profile hidden' });
 const pondEl = h(
@@ -100,6 +102,7 @@ const pondEl = h(
 app.append(
   headerEl,
   pondEl,
+  huntEl,
   cupEl,
   tackleEl,
   profileEl,
@@ -118,16 +121,18 @@ selectTab(tab);
 function route(): void {
   const tackle = location.hash === '#/tackle';
   const cup = location.hash === '#/cup';
+  const hunt = location.hash === '#/hunt';
   const stats = location.hash === '#/stats';
   const profile = location.hash === '#/profile';
-  pondEl.classList.toggle('hidden', tackle || cup || stats || profile);
+  pondEl.classList.toggle('hidden', tackle || cup || hunt || stats || profile);
   statsEl.classList.toggle('hidden', !stats);
   profileEl.classList.toggle('hidden', !profile);
   // the history by water is read from the chain only while its page is open
   wantCareer(profile);
   cupEl.classList.toggle('hidden', !cup);
+  huntEl.classList.toggle('hidden', !hunt);
   tackleEl.classList.toggle('hidden', !tackle);
-  document.title = tackle ? 'Tackle · Onchain Fishing' : cup ? 'Cup · Onchain Fishing' : profile ? 'My Stats · Onchain Fishing' : stats ? 'Debug telemetry · Onchain Fishing' : 'Onchain Fishing';
+  document.title = tackle ? 'Tackle · Onchain Fishing' : hunt ? 'Season Hunt · Onchain Fishing' : cup ? 'Tournaments · Onchain Fishing' : profile ? 'My Stats · Onchain Fishing' : stats ? 'Debug telemetry · Onchain Fishing' : 'Onchain Fishing';
   emit();
 }
 window.addEventListener('hashchange', () => {
@@ -182,6 +187,7 @@ const renders = [
   initTrophies(panels.trophy),
   initRanks(panels.ranks),
   initTackle(tackleEl, true),
+  initHunt(huntEl),
   initCup(cupEl),
   initStats(statsEl),
   initProfile(profileEl),
@@ -195,6 +201,7 @@ setInterval(() => {
   tickRanks();
   tickPond();
   tickCup();
+  tickHunt();
 }, 1000);
 
 if (CHAIN) {

@@ -61,6 +61,8 @@ import { track, trackCast, trackLanding } from '../telemetry';
 import { pearl, qualityTag, rarityTag } from './fmt';
 import { celebrateLevel } from './levelup';
 import { showPrizeReveal } from './prize';
+import { castForHunt } from '../hunt';
+import { huntCastArmed, huntStrip, huntStripSig } from './hunt';
 
 /** 'landing' exists on the contracts only: the reel transaction is on its way. */
 type Phase = 'idle' | 'casting' | 'waiting' | 'bite' | 'landing' | 'reeling' | 'result';
@@ -101,7 +103,7 @@ export function initPond(sceneHost: HTMLElement, controlsHost: HTMLElement): () 
   window.addEventListener('pointerup', () => (holding = false));
   window.addEventListener('blur', () => (holding = false));
 
-  const renderControls = mount(controlsHost, () => sigOf(rev(), phase, viewLoc, energyNow(getSave(), Date.now()), state.wallet?.address, dailyBadge()), renderControlsView);
+  const renderControls = mount(controlsHost, () => sigOf(rev(), phase, viewLoc, energyNow(getSave(), Date.now()), state.wallet?.address, dailyBadge(), huntStripSig()), renderControlsView);
   return () => {
     renderControls();
     resumeChainCast();
@@ -295,7 +297,10 @@ async function castOnChain(): Promise<void> {
   scene.setSpot(locationId);
   scene.setPhase('casting');
   setPhase('casting');
-  const receipt = await tx('Cast', { functionName: 'cast', args: [locationId] }, true);
+  // with the hunt switched on, the same cast goes through the season hunt: the game makes it exactly as always
+  // (its events are in the receipt), and it is numbered as an attempt at the season's fish as well
+  const season = huntCastArmed();
+  const receipt = season ? await castForHunt(season, locationId) : await tx('Cast', { functionName: 'cast', args: [locationId] }, true);
   if (!receipt) {
     scene.setPhase('idle');
     finish();
@@ -903,6 +908,7 @@ function renderControlsView(): HTMLElement[] {
   const guest = CHAIN && !state.wallet;
   const reason = guest ? null : castBlocker(s, now);
   const cost = LOCATIONS[s.location].energyCost;
+  const hunting = guest ? null : huntCastArmed();
   out.push(
     h(
       'div',
@@ -910,7 +916,7 @@ function renderControlsView(): HTMLElement[] {
       // nobody is signed in: the big button is the way in, not a dead Cast
       guest
         ? h('button', { class: 'btn btn-cast btn-wallet', attrs: { type: 'button' }, onclick: openFluentConnect }, icon('bobber'), 'Connect to cast')
-        : h('button', { class: 'btn btn-cast', disabled: busy || !!reason, onclick: doCast }, busy ? 'In the water…' : 'Cast'),
+        : h('button', { class: `btn btn-cast${hunting ? ' btn-hunt' : ''}`, disabled: busy || !!reason, title: hunting ? `A seasonal cast: an ordinary cast that is also an attempt at the season’s fish (${hunting.name})` : undefined, onclick: doCast }, busy ? 'In the water…' : hunting ? 'Hunt cast' : 'Cast'),
       guest
         ? null
         : h(
@@ -920,6 +926,10 @@ function renderControlsView(): HTMLElement[] {
           ),
     ),
   );
+
+  // a season is being fished: the switch between ordinary and seasonal casts, and what a cast here is worth
+  const strip = guest ? null : huntStrip(busy);
+  if (strip) out.push(strip);
 
   // the day's challenges at a glance; the cards are in the Daily tab
   const daily = guest ? null : dailyBadge();

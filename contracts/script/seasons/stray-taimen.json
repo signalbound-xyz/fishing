@@ -1,0 +1,17 @@
+{
+  "name": "The Stray Taimen",
+  "description": "A taimen has left the rapids and been seen in quieter water. The first angler to hook it takes the whole prize. River tackle helps, the open sea helps more, and nothing guarantees it.",
+  "durationHours": 168,
+  "speciesId": 9,
+  "waters": [0, 1, 2, 3],
+  "rods": [],
+  "minLevel": 0,
+  "dailyAttempts": 20,
+  "settleWindowSeconds": 3600,
+  "baseChance": 8000000,
+  "maxBonus": 200,
+  "prizeBlend": 1000,
+  "rodBonus": [0, 30, 20, 60, 30, 80],
+  "lureBonus": [20, 30, 60, 20, 10, 80],
+  "waterBonus": [0, 10, 25, 40]
+}

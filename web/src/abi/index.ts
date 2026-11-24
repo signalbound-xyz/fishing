@@ -8,3 +8,4 @@ export { pearlExchangeAbi } from '../generated/PearlExchange';
 export { tournamentsAbi } from '../generated/Tournaments';
 export { bottlePoolAbi } from '../generated/BottlePool';
 export { dailyRewardsAbi } from '../generated/DailyRewards';
+export { seasonHuntAbi } from '../generated/SeasonHunt';

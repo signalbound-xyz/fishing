@@ -109,6 +109,7 @@ nothing in the browser decides a catch, a balance or an unlock; the only client-
 | `pnpm build:api` | bundles the reward verifier (`src/server`) into `api/daily-reward.js`; `pnpm test` fails when that file is stale |
 | `pnpm api:dev` | runs the verifier on this machine (port 8787) with the environment of [DAILY_REWARDS.md](DAILY_REWARDS.md) |
 | `pnpm sim:daily` | plays the daily challenge sets with a model player, writes the cost table in `DAILY_CHALLENGES.md` |
+| `pnpm sim:hunt` | plays Season Hunt seasons for crowds of 10 to 10,000 model anglers, writes the tables in `SEASON_HUNT_BALANCE.md` |
 
 After changing the contracts: `forge build` (and redeploy if needed), then `pnpm sync`.
 If `contracts/out` is missing, `sync` keeps the already generated files.
@@ -119,6 +120,25 @@ If `contracts/out` is missing, `sync` keeps the already generated files.
 - `VITE_CHAIN_ID` — chainId (default `20994`, Fluent Testnet; `25363` is Fluent mainnet); addresses are taken from `deployments/<chainId>.json`.
 - `VITE_RPC_URL` — node RPC (default: the network's public RPC).
 - `VITE_TELEMETRY` — `off` stops the gameplay telemetry from recording (it is on by default and stays in the browser).
+
+## Season Hunt (`#/hunt`)
+
+The first competition in the navigation; the design is in [../SEASON_HUNT.md](../SEASON_HUNT.md) and the odds in
+[SEASON_HUNT_BALANCE.md](SEASON_HUNT_BALANCE.md). It exists in contract mode only and only where the deployment
+names a `seasonHunt`; otherwise the page says the hunt is not deployed on this network.
+
+- The page shows the season (target, prize, time left, waters, entry rules), the odds of one cast with the tackle
+  in hand and with every other rod, lure and water of the season's table, the catch while it is being decided,
+  the winner, and the past seasons. Everything is read from `SeasonHunt.list`.
+- Fishing happens at the pond. The gold strip under the Cast button switches the hunt on and off; with it on the
+  button reads **Hunt cast** and the cast is sent to `SeasonHunt.cast` instead of `FishingGame.cast`. The rest of
+  the cast is the ordinary flow.
+- An attempt's result is the contract's (`outcome`), asked once the attempt's drand round exists; its signature
+  is fetched from a public drand relay, and only the round number is sent there. A hit is recorded with one more
+  transaction (`settle`), automatically, with a **Record the catch** button as the fallback. Attempts waiting for
+  their result are kept in `localStorage` and found again from the contract's events after a reload.
+- Odds are "1 in N" for a cast, computed with the contract's arithmetic (`src/game/hunt.ts`). The page does not
+  show a chance of winning the season.
 
 ## My Stats (`#/profile`)
 
@@ -217,6 +237,7 @@ src/game/              the rules, pure TypeScript, no DOM and no storage
   minigame.ts          hook window, bite delay and the reel fight as pure functions; model players
   chainOutcome.ts      what a pending cast will be, computed as the contract computes it
   tournament.ts        score, week boundaries, top ten, demo standings
+  hunt.ts              Season Hunt: the chance of a seasonal cast as the contract computes it, odds as text, statuses, the drand round of a cast
   progress.ts          unlocks (permanent vs ownership), encyclopedia, achievements
   mastery.ts           location mastery: three tiers per water as a pure function of the encyclopedia
   daily.ts             daily challenges: the rules, the day's set (deterministic), progress, the local day
@@ -237,9 +258,10 @@ src/play/              the local game's shell
   daily.ts             daily challenges in the browser: the chain reader, its cache, what the UI shows
   dailyReward.ts       the reward in the browser: what the contract says, the claim (verifier, then one transaction)
   career.ts            My Stats in the browser: the event reader, the per-account cache, the one view the page reads
+  hunt.ts              Season Hunt in the browser: seasons, the seasonal cast, attempts waiting for their drand round, recording a hit, claiming
   pending.ts, claims.ts  actions on their way (a claim is sent once, its button waits)
   prefs.ts             on the contracts: where the saved fish (the Trophy Room) are kept (per chain and account)
-  ui/*.ts              pond, keepnet, daily, collection (with mastery), trophies (with trophyRoom), ranks, header, prize (the bottle reveal), profile (My Stats), stats (debug telemetry)
+  ui/*.ts              pond, keepnet, daily, collection (with mastery), trophies (with trophyRoom), ranks, header, prize (the bottle reveal), profile (My Stats), hunt (the Season Hunt page and the pond strip), stats (debug telemetry)
 src/telemetry/         telemetry format, recorder and summary: pure, no DOM
 src/server/            the daily reward verifier: the check (dailyReward.ts), the chain reads (chain.ts), HTTP (http.ts)
 api/daily-reward.js    the verifier as one file for Vercel, generated by `pnpm build:api` and committed

@@ -2,8 +2,8 @@
 
 `FishingGame` and `Tournaments` run behind OpenZeppelin transparent proxies. Their addresses and everything players
 own or have done are permanent; an upgrade is new code behind the same address. The other contracts (`PearlToken`,
-`FishNFT`, `BottlePool`, `PearlExchange`, `Marketplace`, `FightVerifier`, `GameLens`) are plain contracts and are
-never replaced in place.
+`FishNFT`, `BottlePool`, `PearlExchange`, `Marketplace`, `FightVerifier`, `GameLens`, `DailyRewards`, `SeasonHunt`
+and its beacon) are plain contracts and are never replaced in place.
 
 This file is the procedure and the tooling around it. Nothing here needs a private key until the upgrade
 transaction itself.
@@ -243,6 +243,83 @@ On Fluent Testnet all of it was done on 24 November 2026: release 002, `DailyRew
 rehearsal (`test_dailyRewardOnTheForkAfterTheUpgrade`) checks that an upgrade leaves the game listening to that
 contract and that it keeps paying.
 
+## Season Hunt (`castFor`, `landFor`, `SeasonHunt`)
+
+Season Hunt ([SEASON_HUNT.md](../SEASON_HUNT.md) has the whole design) is the second change that adds to the
+game's interface, built the same way as the daily reward: a thin hook in the game, everything else in a plain
+contract the game merely listens to. **It is in the source and not deployed anywhere**; release 002 on Fluent
+Testnet does not have the hook.
+
+**In `FishingGame`: one hook, 605 bytes.**
+
+```solidity
+address public seasonHunt;                                          // appended after energyGranter
+function setSeasonHunt(address hunt) external onlyOwner;
+function castFor(address player, uint8 locationId) external;        // only seasonHunt
+function landFor(address player, FishNFT.Fish calldata f) external; // only seasonHunt
+```
+
+`cast(locationId)` is now `_cast(msg.sender, locationId)`, and `castFor` calls the same internal function: the
+body of `cast` moved, unchanged, with `msg.sender` replaced by its parameter. `landFor` forwards one
+`fishNft.mint`. With `seasonHunt` zero, which is its value after the upgrade, nobody can call either.
+
+**`SeasonHunt` (15,455 bytes) and its beacon (`DrandBeacon` 4,158, or `BlockhashBeacon` 552): plain contracts,
+not proxies.** Seasons, attempts, the winner and the BLEND escrow live there. The game calls nothing on them and
+is never delegatecalled by them.
+
+### Compatibility
+
+- **Storage**: one variable appended at the end (`seasonHunt`, after `energyGranter`). No struct changed.
+  `./check-layout.sh` and `./validate-upgrade.sh` pass against release 002.
+- **ABI**: four functions added, nothing changed or removed. `cast` keeps its selector, its events and its
+  reverts. The released `GameLens`, the released `Tournaments`, the released `DailyRewards` and a web client built
+  before this change work with the new code as they are.
+- **Rules**: `_reel`, the config, the catalog, energy and prices are untouched. A cast in the water at the moment
+  of the upgrade is landed as before, and step 3 of the procedure needs no waiting.
+- **Gameplay**: `test/Upgrade.t.sol`'s gameplay comparison (the same stretch of play on the released code and on
+  the new code must emit the same events and leave the same state) passes unchanged, which is the proof that
+  moving the body of `cast` changed nothing. `test_the_ordinary_catch_is_the_same_through_the_hunt` shows the same
+  for a cast made through the hunt.
+- **State**: `test_seasonHuntOnTopOfTheReleasedState` plays the world on the released bytecode, upgrades, checks
+  that the hook is closed, deploys and attaches a hunt, and has a player of the released world cast at the Golden
+  Lake they had unlocked, hook the target, land the ordinary catch and claim. Their energy, rod and lure are
+  charged as by `cast`; every other player, fish and tournament reads as before.
+  `test/UpgradeFork.t.sol` (`test_seasonHuntOnTheForkAfterTheUpgrade`) does it on a fork of Fluent Testnet with
+  the real scripts and the network's own BLEND and fish contracts: upgrade, `SeasonHuntScript` deploy and attach on
+  the drand beacon, a season from the repository's season file, a newcomer's cast decided by a round drand really
+  made, the prize and the trophy; the holdings of every player the chain knows are compared before and after.
+- **Rollback**: detach the hunt (`setSeasonHunt(0)`), then pointing the proxy back at release 002 is safe: the old
+  code never reads the new slot. If the hunt is still attached to old code, `SeasonHunt.cast` reverts as a whole,
+  because the game has no `castFor`: nothing is charged and no attempt is recorded. Prizes already in escrow are in
+  `SeasonHunt`, not in the game, and stay claimable or reclaimable whatever the game runs; only the trophy mint
+  needs the hook, and `claim` pays without it.
+
+### What the hook can do
+
+The hunt's address can make a cast for any player and mint any fish; that is the whole trust the game places in
+it. `SeasonHunt` passes only `msg.sender` to `castFor`, and calls `landFor` once per won season with the season's
+species for the season's winner. It has no owner function that reaches the game, it is not upgradeable, and the
+game's owner can detach it with one transaction. A wrong address in `setSeasonHunt` would be able to spend
+players' energy and tackle and mint fish (which sell for PEARL), so setting it is an owner action of the same
+weight as an upgrade, and `script/SeasonHunt.s.sol` (`attach`) checks that the address is a hunt bound to this
+game and this fish contract before it sends.
+
+### Gas
+
+From `forge test --gas-report`: a seasonal cast (`SeasonHunt.cast`) 206,000 median, of which the game's own cast
+(`castFor`) is 88,000; the rest is the attempt's storage slot, the daily tally and the calls. `settle` 70,000
+with the block-hash beacon and 207,000 with a drand proof (the pairing check is 135,600 of that); `claim` with the
+trophy mint 240,000 median, and 351,352 for a first claim measured on a local chain. Deploying `DrandBeacon` and
+verifying one round in the same creation was estimated by a Fluent Testnet node at 1,182,472 gas.
+
+### Procedure
+
+The upgrade of the game is the procedure above, unchanged (`TARGET=game`). After it the hook exists and is
+closed. Deploying the hunt, attaching it, announcing and funding a season are separate, explicit transactions of
+`script/SeasonHunt.s.sol` (`deploy`, `attach`, `create`, `fund`, and for incidents `detach`, `cancel`);
+SEASON_HUNT.md, "Deployment", has them in order. `SeasonHunt` and the beacons have no release snapshot;
+`preflight.sh` lists their sizes with the others.
+
 ## Contract size
 
 **Fluent enforces EIP-170.** Checked on Fluent Testnet by simulating a contract creation (`eth_estimateGas`, no
@@ -253,8 +330,15 @@ transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `Cre
 | release 001, on Fluent Testnet until 24 November 2026 | 24,336 | 240 |
 | after the optimizations below (never deployed by itself) | 23,340 | 1,236 |
 | release 002, on Fluent Testnet now: the above plus the daily reward hook | 23,688 | 888 |
+| the source now, not deployed: the above plus the Season Hunt hook | 24,293 | 283 |
 
-`DailyRewards`, the plain contract that goes with the hook, is 3,802 bytes. See "The daily reward" below.
+`DailyRewards`, the plain contract that goes with the daily reward hook, is 3,802 bytes; `SeasonHunt` is 15,455 and
+`DrandBeacon` 4,158. See "The daily reward" and "Season Hunt" above.
+
+**283 bytes is all that is left.** The Season Hunt hook was first written to land the trophy through the game's own
+catch code (dex, XP, the `Caught` event): 2,078 bytes, which did not fit. What is in the source mints the fish and
+nothing else. The next feature that needs code in `FishingGame` needs one of the options under "What 1,236 bytes
+buy" first; paid location unlocks (838 bytes) no longer fit beside the hunt.
 
 ### What was optimized
 
@@ -293,9 +377,9 @@ break the released lens.
 
 ### What 1,236 bytes buy
 
-The daily reward hook took 348 of them (below); 888 are left. Paid location unlocks (`buyLocation`,
-`setLocationOffer`, one mapping) measured 838 bytes on top of the 23,340: with the hook that is 24,526, with 50
-bytes left. So that feature still fits, barely, and nothing after it does. The target of 3 KB needs one of the
+The daily reward hook took 348 of them and the Season Hunt hook 605; 283 are left. Paid location unlocks (`buyLocation`,
+`setLocationOffer`, one mapping) measured 838 bytes on top of the 23,340: with the daily reward hook that was
+24,526, with 50 bytes left; with the Season Hunt hook as well it is over the limit. The target of 3 KB needs one of the
 following. All sizes were measured on the source before the hook (23,340), each in a throwaway copy; none of it is
 in the repository.
 
@@ -356,7 +440,8 @@ exactly as today. It frees the most, and it is the one to justify carefully befo
 ### Recommendation
 
 1. Ship the optimizations above with the next upgrade. They are in the source, change no interface and no rule, and
-   make room for paid location unlocks.
+   make room for paid location unlocks. (Done in release 002. With the Season Hunt hook in as well, paid location
+   unlocks need point 2 first.)
 2. For 3 KB and more with content management kept on the chain: **A**, keeping `playerOf` and `castOf` (3,672 free)
    or not (4,534 free). It is the only option above 3 KB that adds no delegatecall, no new privilege and no
    migration. It changes the read interface, so it is a decision to take before it is built.
@@ -385,6 +470,10 @@ network with real value needs the owner to be a multisig behind a timelock befor
   4 energy per player and day, for today and yesterday, never over the bar, and nothing else; the owner revokes it
   with one transaction (`web/DAILY_REWARDS.md`, "What the key can do" and "Switching it off"). `energyGranter` is
   set by the same one key as everything else.
+- **The hunt's address is trusted by the game** to cast for players and to mint fish (see "What the hook can do").
+  It is set by the same one key as everything else.
+- **Season Hunt randomness and Sybil resistance** are testnet-grade: SEASON_HUNT.md, "Randomness", "Security
+  assessment" and "Before a public launch".
 - **Players the chain cannot name.** The fork rehearsal compares every player it can find through fish, boards and
   tournaments. A player who cast and never landed anything is not found; their state is covered by the slot
   comparison of the local test only in kind, not individually.

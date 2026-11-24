@@ -189,6 +189,10 @@ contract FishingGame is Ownable {
     /// @notice The one contract that may add energy to a player (src/DailyRewards.sol). Zero: nobody can.
     address public energyGranter;
 
+    /// @notice The one contract that may cast for a player and land a season's trophy (src/SeasonHunt.sol).
+    ///         Zero: nobody can.
+    address public seasonHunt;
+
     // ------------------------------------------------------------------ errors & events
 
     error UnknownRod();
@@ -580,24 +584,28 @@ contract FishingGame is Ownable {
     // ------------------------------------------------------------------ fishing
 
     function cast(uint8 locationId) external {
-        Cast storage active = casts[msg.sender];
+        _cast(msg.sender, locationId);
+    }
+
+    function _cast(address player, uint8 locationId) internal {
+        Cast storage active = casts[player];
         if (active.targetBlock != 0) {
             // Convenience: a finished cast is resolved automatically before the new one.
             if (block.number <= active.targetBlock) revert CastInProgress();
-            _reel(msg.sender);
+            _reel(player);
         }
         if (locationId >= _locations.length) revert UnknownLocation();
         Location storage l = _locations[locationId];
         if (!l.active) revert LocationInactive();
-        if (!isUnlocked(msg.sender, locationId)) revert LocationLocked();
+        if (!isUnlocked(player, locationId)) revert LocationLocked();
 
-        Player storage p = players[msg.sender];
+        Player storage p = players[player];
         uint8 rod = p.rod;
         uint16 rodWear = _rods[rod].wear;
         if (rodWear != 0) {
-            uint16 left = rodDurability[msg.sender][rod];
+            uint16 left = rodDurability[player][rod];
             if (left == 0) revert RodBroken();
-            rodDurability[msg.sender][rod] = left - 1;
+            rodDurability[player][rod] = left - 1;
         }
 
         _syncEnergy(p);
@@ -607,25 +615,49 @@ contract FishingGame is Ownable {
         // The lure works for this cast even if it is its last one.
         uint8 lure = p.lure;
         if (lure != 0) {
-            uint32 left = lureCasts[msg.sender][lure - 1];
+            uint32 left = lureCasts[player][lure - 1];
             if (left == 0) {
                 lure = 0;
                 p.lure = 0;
             } else {
-                lureCasts[msg.sender][lure - 1] = left - 1;
+                lureCasts[player][lure - 1] = left - 1;
                 if (left == 1) p.lure = 0;
             }
         }
 
         // The passive bonus needs a specimen in hand; selling the last one switches it off.
         uint8 special = p.activeSpecial;
-        if (special != 0 && fishNft.heldOf(msg.sender, _specials[special - 1].speciesId) == 0) special = 0;
+        if (special != 0 && fishNft.heldOf(player, _specials[special - 1].speciesId) == 0) special = 0;
 
         uint64 target = uint64(block.number) + config.revealDelay;
-        casts[msg.sender] = Cast(target, p.casts, locationId, rod, lure, special);
+        casts[player] = Cast(target, p.casts, locationId, rod, lure, special);
         p.casts += 1;
         totalCasts += 1;
-        emit Casted(msg.sender, locationId, rod, lure, target);
+        emit Casted(player, locationId, rod, lure, target);
+    }
+
+    // ------------------------------------------------------------------ the season hunt's hook
+
+    function setSeasonHunt(address hunt) external onlyOwner {
+        seasonHunt = hunt;
+    }
+
+    /// @notice A cast of `player`'s own, made through the season hunt: the same energy, the same wear of the rod
+    ///         and the lure, the same catch to land. The hunt only adds its own draw on top (src/SeasonHunt.sol).
+    function castFor(address player, uint8 locationId) external {
+        _onlyHunt();
+        _cast(player, locationId);
+    }
+
+    /// @notice Mints a season's trophy to its winner. The hunt rolls the fish; the game only signs the mint, as
+    ///         the fish contract takes no other minter.
+    function landFor(address player, FishNFT.Fish calldata f) external {
+        _onlyHunt();
+        fishNft.mint(player, f);
+    }
+
+    function _onlyHunt() internal view {
+        if (msg.sender != seasonHunt) revert OwnableUnauthorizedAccount(msg.sender);
     }
 
     function reel() external {

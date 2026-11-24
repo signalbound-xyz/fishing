@@ -21,6 +21,8 @@ fs_permissions = [
   { access = "read", path = "releases" },
   # script/Upgrade.s.sol compares the implementation with the build artifact
   { access = "read", path = "out" },
+  # script/SeasonHunt.s.sol reads the rules of a season
+  { access = "read", path = "script/seasons" },
 ]
 
 [fuzz]
