@@ -10,6 +10,7 @@ import { CHAIN } from '../ops';
 import { getSave, rev } from '../state';
 import { state } from '../../store';
 import { shortAddr } from '../../ui/dom';
+import { claimsSig } from '../claims';
 import { claimButton } from './collection';
 import { ago, duration, pearl, qualityTag } from './fmt';
 
@@ -25,7 +26,7 @@ let countdownEl: HTMLElement | null = null;
 export function initRanks(host: HTMLElement): () => void {
   const rerender = mount(
     host,
-    () => sigOf(rev(), view, weekId(Date.now()), Math.floor(Date.now() / 60_000), world.standings, world.history, state.wallet?.address),
+    () => sigOf(rev(), view, weekId(Date.now()), Math.floor(Date.now() / 60_000), world.standings, world.history, state.wallet?.address, claimsSig()),
     () => render(rerender),
   );
   return rerender;

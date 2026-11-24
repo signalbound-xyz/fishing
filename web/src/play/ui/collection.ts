@@ -3,25 +3,41 @@ import { LOCATIONS, SPECIES, special } from '../../game/content';
 import { TIERS, allMastery, masterySummary, percent, type LocationMastery, type SpeciesMastery, type TierId } from '../../game/mastery';
 import { achievements, collectorStats, isUnlocked, locationProgress, unlockText } from '../../game/progress';
 import type { Save } from '../../game/types';
+import { friendlyError } from '../../errors';
 import { RARITY_CLASS } from '../../i18n';
 import { fmtWeight, h, icon, mount, segBar, sigOf } from '../../ui/dom';
 import { toast } from '../../ui/toast';
 import { fishArt } from '../fishSprite';
-import { ops } from '../ops';
+import { claim, claimsSig, claiming } from '../claims';
 import { getSave, rev } from '../state';
 import { pearl, rarityTag } from './fmt';
 import { masteryBadge } from './masteryBadge';
 
 export function initCollection(host: HTMLElement): () => void {
-  return mount(host, () => sigOf(rev()), render);
+  return mount(host, () => sigOf(rev(), claimsSig()), render);
 }
 
+/**
+ * The button of a reward that is ready. While its claim is on its way (play/claims.ts) it waits: disabled, with the
+ * turning square, and it comes back like that from every redraw until the transaction is settled.
+ */
 export function claimButton(id: string, reward: number): HTMLElement {
+  const busy = claiming(id);
   return h('button', {
-    class: 'btn btn-primary btn-sm',
-    text: `Claim ${pearl(reward)} PEARL`,
+    class: `btn btn-primary btn-sm${busy ? ' busy' : ''}`,
+    text: busy ? 'Claiming…' : `Claim ${pearl(reward)} PEARL`,
+    title: busy ? 'Waiting for the transaction' : undefined,
+    disabled: busy,
+    attrs: busy ? { type: 'button', 'aria-busy': 'true' } : { type: 'button' },
     onclick: () => {
-      void ops.claimAchievement(id).then((got) => got !== undefined && toast(`+${pearl(got)} PEARL`, 'ok'));
+      // a refused or failed transaction has already been reported (play/chain.ts); this is for anything else
+      claim(id).then(
+        (got) => got !== undefined && toast(`+${pearl(got)} PEARL`, 'ok'),
+        (e) => {
+          console.warn('claim failed', e);
+          toast(`Claim reward: ${friendlyError(e)}`, 'err');
+        },
+      );
     },
   });
 }
