@@ -12,6 +12,18 @@ import {Economy} from "../script/Economy.s.sol";
 
 import {CatchMath} from "../src/CatchMath.sol";
 
+/// @dev Attack fixture, used by tests only: finishes a player's cast and undoes the whole call unless a fish was
+///      landed. The classic way to turn "random" into "chosen" when a draw is made in the caller's transaction.
+contract PickyReeler {
+    error Rejected();
+
+    function reelOrRevert(FishingGame game, FishNFT fish, address player) external {
+        uint256 before = fish.balanceOf(player);
+        game.reelFor(player);
+        if (fish.balanceOf(player) == before) revert Rejected();
+    }
+}
+
 contract FishingGameTest is BaseTest {
     // ------------------------------------------------------------------ catalog
 
@@ -317,6 +329,111 @@ contract FishingGameTest is BaseTest {
         assertEq(game.rodDurability(alice, 1), durability, "rod wear is not refunded");
         assertEq(game.lureCasts(alice, 0), casts, "the lure cast is not refunded");
         assertEq(game.dryCatches(alice, 0), 0, "pity does not advance on a skipped cast");
+    }
+
+    /// @dev What `who`'s pending cast would land with `entropy` as its block hash: 0 for no fish, else the fish.
+    ///      Looked at and rolled back.
+    function _peek(address who, bytes32 entropy) internal returns (FishNFT.Fish memory f, bool landed) {
+        uint256 snap = vm.snapshotState();
+        vm.setBlockhash(game.castOf(who).targetBlock, entropy);
+        uint256 id = fish.nextId();
+        game.reelFor(who);
+        landed = fish.nextId() > id;
+        if (landed) f = fish.fish(id);
+        vm.revertToState(snap);
+    }
+
+    /// @dev A caller that reverts every outcome it does not like cannot redraw: the cast stays charged and
+    ///      pending with the same randomness, anybody else can finish it, and a new cast lands the old one first
+    ///      instead of replacing it.
+    function test_revertingAPoorOutcomeCannotRedrawIt() public {
+        vm.prank(alice);
+        game.cast(0);
+        FishingGame.Cast memory committed = game.castOf(alice);
+        vm.roll(committed.targetBlock + 1);
+
+        // a block hash with which this cast lands nothing
+        bytes32 poor;
+        for (uint256 i;; i++) {
+            poor = keccak256(abi.encode("poor", i));
+            (, bool landed) = _peek(alice, poor);
+            if (!landed) break;
+        }
+        vm.setBlockhash(committed.targetBlock, poor);
+
+        PickyReeler picky = new PickyReeler();
+        for (uint256 i; i < 3; i++) {
+            vm.expectRevert(PickyReeler.Rejected.selector);
+            picky.reelOrRevert(game, fish, alice);
+            vm.roll(vm.getBlockNumber() + 20); // waiting changes nothing: the block is fixed
+        }
+        assertEq(keccak256(abi.encode(game.castOf(alice))), keccak256(abi.encode(committed)), "the cast changed");
+        assertEq(game.currentEnergy(alice), 19, "the energy came back");
+        assertEq(game.playerOf(alice).casts, 1);
+
+        // the player cannot throw the poor cast away by casting again: it is landed first, as drawn
+        vm.expectEmit(true, false, false, true);
+        emit FishingGame.Missed(alice, 0);
+        vm.prank(alice);
+        game.cast(0);
+        assertEq(fish.balanceOf(alice), 0);
+        assertEq(game.castOf(alice).nonce, committed.nonce + 1);
+        assertEq(game.currentEnergy(alice), 18, "the second cast was not charged");
+    }
+
+    /// @dev The same attacker gets what the block says and nothing better when the outcome is a fish: whoever
+    ///      finishes the cast, the fish is the same one.
+    function test_whoFinishesACastDoesNotChangeTheFish() public {
+        vm.prank(alice);
+        game.cast(0);
+        uint64 target = game.castOf(alice).targetBlock;
+        vm.roll(target + 1);
+        bytes32 good;
+        FishNFT.Fish memory expected;
+        for (uint256 i;; i++) {
+            good = keccak256(abi.encode("good", i));
+            bool landed;
+            (expected, landed) = _peek(alice, good);
+            if (landed) break;
+        }
+        vm.setBlockhash(target, good);
+        uint256 id = fish.nextId();
+        new PickyReeler().reelOrRevert(game, fish, alice);
+        assertEq(fish.ownerOf(id), alice);
+        assertEq(keccak256(abi.encode(fish.fish(id))), keccak256(abi.encode(expected)));
+    }
+
+    /// @dev The rod and the lure of a cast are the ones on the line when it was made. Changing tackle while the
+    ///      cast is in the water, with the block hash already known, does not change what it lands.
+    function test_tackleIsFixedAtCastTime() public {
+        _fund(alice, 5_000 * E);
+        vm.startPrank(alice);
+        game.buyRod(1);
+        game.buyLure(0);
+        game.equipRod(0);
+        game.equipLure(0);
+        game.cast(0);
+        vm.stopPrank();
+        uint64 target = game.castOf(alice).targetBlock;
+        vm.roll(target + 1);
+
+        uint256 compared;
+        for (uint256 i; compared < 8; i++) {
+            bytes32 entropy = keccak256(abi.encode("tackle", i));
+            (FishNFT.Fish memory plain, bool landed) = _peek(alice, entropy);
+
+            uint256 snap = vm.snapshotState();
+            vm.startPrank(alice);
+            game.equipRod(1);
+            game.equipLure(1);
+            vm.stopPrank();
+            (FishNFT.Fish memory swapped, bool landedSwapped) = _peek(alice, entropy);
+            vm.revertToState(snap);
+
+            assertEq(landedSwapped, landed, "new tackle changed whether the cast lands a fish");
+            assertEq(keccak256(abi.encode(swapped)), keccak256(abi.encode(plain)), "new tackle changed the fish");
+            if (landed) compared++;
+        }
     }
 
     // ------------------------------------------------------------------ what a catch records

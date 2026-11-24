@@ -94,13 +94,59 @@ nonce and the contract address. This is **not** manipulation-resistant randomnes
   a poor result expire only wastes the cast.
 - **Delay.** Settling later changes nothing while the hash is readable (fuzz-tested: any settler, any block in
   the window, same result).
+- **Reverting what one does not like.** A contract that finishes a cast and reverts unless a fish was landed gets
+  the same answer every time: the cast stays charged and pending with the same block, anybody else can finish it,
+  and a new cast lands the old one first instead of replacing it
+  (`test_revertingAPoorOutcomeCannotRedrawIt`, `test_whoFinishesACastDoesNotChangeTheFish`).
+- **What is fixed at the cast and what is read at the reel.** Fixed: the water, the rod, the lure, the active
+  special bonus, the block (`test_tackleIsFixedAtCastTime`, `test_activeSpecialIsFixedAtCastTime`). Read when
+  the cast is landed: the config and the catalog (see "Rules in flight" in `contracts/UPGRADES.md`), the pity
+  counter, and, for a bottle, the pool's own conditions (the player's level, today's limit, BLEND left). A player
+  who already knows the draw can still change those last ones for up to 256 blocks, about four minutes; with
+  the bottle switched off, as it is, nothing there is worth anything.
 - **Value at stake.** Today: testnet tokens and NFTs with no market. That is why this is acceptable now.
 
 Before anything with real value rides on a catch, the source should be a VRF or a randomness beacon.
 **Consequences of switching:** the randomness source is compiled into `FishingGame`. The game runs behind an
 upgradeable proxy, so a new source is an upgrade that keeps all player progress, not a new game. An oracle-based
 source also changes the flow: the contract waits for a callback instead of reading a block hash, so `reel()`
-becomes "claim when fulfilled". Not done here; it needs a decision first.
+becomes "claim when fulfilled". Not done here; it needs a decision first. Season Hunt, where a prize does ride
+on the draw, already uses a beacon: drand signatures verified on the chain (`contracts/src/DrandBeacon.sol`,
+[SEASON_HUNT.md](SEASON_HUNT.md)). The same beacon could decide ordinary casts with no callback, `reel` taking
+the round's signature, at the price of about 35 seconds between the cast and the bite and 135,000 gas per reel.
+
+### Compared with potion-game
+
+[potion-game](https://github.com/signalbound-xyz/potion-game), another game on Fluent, was read on 24 November
+2026 for its random draws (`docs/SETTLEMENT.md` there). Its protocol and this one have the same shape: the player's
+transaction spends the attempt and fixes a future block, a later transaction that anyone may send lands the result,
+nothing can be redrawn, and after 256 blocks the result is forfeited with no refund and no other seed.
+
+| | potion-game | This game |
+|---|---|---|
+| Entropy | `PREVRANDAO` of block N+1, read in that block or later proven from its RLP header against `blockhash` | `blockhash` of block N+2 |
+| Earliest result | block N+1 | block N+3 |
+| Who can bias it | the block producer | the block producer |
+| Inputs fixed at the request | the whole fight as a snapshot, the rules contract, the verifier's code hash | water, rod, lure, special bonus; the catalog and config are read at the reel |
+| Sub-draws | one tagged hash per draw | slices of one 256-bit seed |
+| Left unfinished | an operator's settler finishes or expires it every minute | the player's client; anyone may call `reelFor` |
+
+- **The entropy is the same in strength.** Fluent's block producer fills `PREVRANDAO` with fresh random bytes for
+  every block (`prev_randao: B256::random()` in the node's payload builder, checked at the revision the testnet
+  reported, `fluent/v1.5.2-6e880d5e`; blocks read from the testnet carry a different value each, empty ones
+  too). The block hash covers that field, so a player can predict neither, and the producer can choose both.
+  Reading `PREVRANDAO` instead would bring the result two blocks sooner and needs an RLP header parser, for which
+  `FishingGame` (283 bytes under its size limit) has no room. Not taken.
+- **Slices against tagged hashes.** The bite, the bottle, the special fish, the species, the weight and the
+  quality are cut from one seed with moduli that are not powers of two, so they are not strictly independent.
+  Measured for the bite against the bottle: the bite chance among bottle-winning seeds differs from the plain one
+  by less than 0.03 percentage points. Not worth a change that would alter every recorded test vector.
+- **Taken:** the adversarial tests above, which potion-game has and this game lacked, and this account of where
+  the guarantees end.
+- **Worth taking next, each a decision:** an operator's settler (for Season Hunt hits first, see SEASON_HUNT.md,
+  "Before a public launch", and for casts about to expire); fixing the rules of a cast when it is made, which
+  needs room in `FishingGame`; and, not from potion-game, the EIP-2935 history contract, which the testnet
+  serves, to read block hashes for 8,191 blocks instead of 256 so that a closed tab does not lose the fish.
 
 ## Tournaments: where skill does decide
 

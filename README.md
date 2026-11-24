@@ -8,7 +8,7 @@ Hypothesis results for the first version are in **[REPORT.md](REPORT.md)**; the 
 
 | Folder | Contents |
 |---|---|
-| `contracts/` | Foundry project: `FishingGame` and `Tournaments` (both behind upgradeable proxies), `FightVerifier`, `BottlePool`, `GameLens`, `FishNFT`, `PearlToken`, `PearlExchange`, `Marketplace`, `DailyRewards`, `SeasonHunt` with its randomness beacons + 241 tests (6 of them on a fork of the live network), upgrade tooling ([UPGRADES.md](contracts/UPGRADES.md)) |
+| `contracts/` | Foundry project: `FishingGame` and `Tournaments` (both behind upgradeable proxies), `FightVerifier`, `BottlePool`, `GameLens`, `FishNFT`, `PearlToken`, `PearlExchange`, `Marketplace`, `DailyRewards`, `SeasonHunt` with its randomness beacons + 244 tests (6 of them on a fork of the live network), upgrade tooling ([UPGRADES.md](contracts/UPGRADES.md)) |
 | `contracts/script/SeasonHunt.s.sol`, `contracts/script/seasons/` | deploying the hunt, announcing and funding a season; a season is a JSON file |
 | `contracts/script/GameSetup.sol` | catalog: species, locations, rods, lures, special fish, achievements, config |
 | `sim/` | model of the first version's formulas and an agent-based economy simulation (Python) |
