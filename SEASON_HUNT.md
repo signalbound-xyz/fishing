@@ -7,10 +7,11 @@ This file is the design, the security assessment, the deployment instructions an
 before a public launch. The balance numbers are in [web/SEASON_HUNT_BALANCE.md](web/SEASON_HUNT_BALANCE.md); the
 upgrade-safety report is the "season hunt" section of [contracts/UPGRADES.md](contracts/UPGRADES.md).
 
-**Status: built and tested in the repository, deployed nowhere.** No contract on Fluent Testnet was touched. The
-game there (release 002) does not have the hunt's hook yet, so the Season Hunt page of the client says "not
-deployed on this network yet" until the steps under [Deployment](#deployment) are run, and they are run only with
-the owner's go-ahead.
+**Status: live on Fluent Testnet since 24 November 2026, with a prize of test tokens only.** The game runs
+release 003 (the hook), `SeasonHunt` is at `0xb09eA27cA0B980f4A1031FD19084F8EdA4dbe5E0` on the drand beacon
+`0x444fb6D173EF8FcEE21BD6D73FF7844C3D66E91a`, and the first season, "The Stray Taimen", runs from 24 November
+15:26 UTC to 1 December with 1,000 Mock BLEND in escrow. It is not ready for a prize of value: see
+[Before a public launch](#before-a-public-launch).
 
 | Piece | Where |
 |---|---|
@@ -274,7 +275,8 @@ required paid rod costs 1,500 PEARL per wallet. What a launch with real value ne
 
 ## Deployment
 
-Nothing here was run against a live network. Every step that changes one needs the owner's explicit go-ahead.
+These steps were run on Fluent Testnet on 24 November 2026, in this order (see "Rehearsals" at the end). Every
+step that changes a network needs the owner's explicit go-ahead.
 
 Before anything: `cd contracts && ./preflight.sh fluent_testnet` (layout, OpenZeppelin validation, sizes, tests,
 releases against the chain, the upgrade rehearsed on a fork).
@@ -383,7 +385,7 @@ A hunt with a prize of real value needs all of these; none is done.
 
 ### Rehearsals
 
-Run on 24 November 2026; none of them sent anything to a live network.
+Run on 24 November 2026, before the deployment; none of them sent anything to a live network.
 
 - **Fluent Testnet, read-only.** `./preflight.sh fluent_testnet` passed: storage layout and OpenZeppelin
   validation against release 002, 235 tests, the releases rebuilt and compared with the chain, and the six fork
@@ -404,4 +406,16 @@ Run on 24 November 2026; none of them sent anything to a live network.
   the prize was claimed with the page's button. **What this did not exercise:** signing through Fluent Connect.
   There is no wallet for a local chain, so for this rehearsal transactions were handed to the local node by a
   temporary shim in place of the sign-in module (not in the repository). The first cast on Fluent Testnet through
-  the real wallet is still to be made, after deployment.
+  the real wallet is still to be made.
+
+### The deployment on Fluent Testnet
+
+24 November 2026, with the owner's go-ahead, by the steps of "Deployment":
+
+- the game upgraded to release 003 (implementation `0x294a9a59B29055C13b8bfba934c9b886d1C24a4b`, 24,293 bytes);
+  the release was recorded and rebuilt from its commit; after the upgrade `seasonHunt` was zero, the daily reward
+  contract was still attached and the cast counter was unchanged;
+- the drand probe answered with the expected randomness, and the deployed beacon verifies the same real round;
+- `SeasonHunt` deployed and attached; season 0 announced from `stray-taimen.json` and funded by the owner's
+  address with 1,000 Mock BLEND (the testnet's BLEND is a mock that anyone can mint; the prize was minted for
+  this).

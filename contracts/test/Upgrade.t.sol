@@ -516,13 +516,14 @@ contract UpgradeFromReleaseTest is TournamentsBase {
         return keccak256(abi.encode(lens.playerView(who), pearl.balanceOf(who)));
     }
 
-    /// @dev The season hunt is a contract of its own behind one new slot of the game (`seasonHunt`). On the
-    ///      released state the slot is empty and the hook is shut; once the hunt is attached, a seasonal cast of
-    ///      a player who played on the released code costs what a cast costs and moves nothing else, the prize and
-    ///      the trophy reach the winner, and every fish, tournament and other player is as the release left it.
+    /// @dev The season hunt is a contract of its own behind one slot of the game (`seasonHunt`). Release 002 had
+    ///      no hook; since release 003 there is one, shut until the owner names the hunt. On a world played on the
+    ///      released code the slot is empty; once the hunt is attached, a seasonal cast of a player who played on
+    ///      the released code costs what a cast costs and moves nothing else, the prize and the trophy reach the
+    ///      winner, and every fish, tournament and other player is as the release left it.
     function test_seasonHuntOnTopOfTheReleasedState() public {
-        (bool hasHook,) = address(game).staticcall(abi.encodeWithSignature("seasonHunt()"));
-        assertFalse(hasHook, "the released code has no hunt hook: this test is about adding it");
+        (bool hasHook, bytes memory attached) = address(game).staticcall(abi.encodeWithSignature("seasonHunt()"));
+        if (hasHook) assertEq(abi.decode(attached, (address)), address(0), "this world never attached a hunt");
 
         bytes32 gameBefore = _gameState();
         _upgrade();

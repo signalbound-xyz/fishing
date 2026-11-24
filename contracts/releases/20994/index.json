@@ -1,9 +1,10 @@
 {
   "FishingGame": {
-    "latest": "002",
+    "latest": "003",
     "releases": [
       "001",
-      "002"
+      "002",
+      "003"
     ]
   },
   "Tournaments": {

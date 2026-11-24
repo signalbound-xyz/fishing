@@ -109,7 +109,7 @@ The winner is the earliest cast that hooked the target, by the order in which ca
 
 The draw uses the [drand](https://drand.love) randomness beacon, whose signatures the contract verifies on the chain, because no VRF provider serves Fluent today and a block hash is the sequencer's to choose. The hunt is a contract of its own behind a small hook in `FishingGame` (`castFor`, `landFor`).
 
-**It is built and tested and not deployed yet.** A free season is also open to anybody who runs many wallets, so until that is solved it is for testnet prizes only. The design, the security assessment, the deployment steps and what a public launch needs are in [SEASON_HUNT.md](SEASON_HUNT.md); the simulated odds are in [web/SEASON_HUNT_BALANCE.md](web/SEASON_HUNT_BALANCE.md) (`cd web && pnpm sim:hunt`).
+**It is live on Fluent Testnet since 24 November 2026** (the first season, "The Stray Taimen", runs to 1 December for 1,000 test BLEND). A free season is open to anybody who runs many wallets, so until that is solved it is for testnet prizes only. The design, the security assessment, the deployment steps and what a public launch needs are in [SEASON_HUNT.md](SEASON_HUNT.md); the simulated odds are in [web/SEASON_HUNT_BALANCE.md](web/SEASON_HUNT_BALANCE.md) (`cd web && pnpm sim:hunt`).
 
 ## Tournaments
 

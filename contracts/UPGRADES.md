@@ -247,8 +247,8 @@ contract and that it keeps paying.
 
 Season Hunt ([SEASON_HUNT.md](../SEASON_HUNT.md) has the whole design) is the second change that adds to the
 game's interface, built the same way as the daily reward: a thin hook in the game, everything else in a plain
-contract the game merely listens to. **It is in the source and not deployed anywhere**; release 002 on Fluent
-Testnet does not have the hook.
+contract the game merely listens to. On Fluent Testnet since 24 November 2026: release 003, `SeasonHunt` at
+`0xb09eA27cA0B980f4A1031FD19084F8EdA4dbe5E0`, its drand beacon at `0x444fb6D173EF8FcEE21BD6D73FF7844C3D66E91a`.
 
 **In `FishingGame`: one hook, 605 bytes.**
 
@@ -270,7 +270,7 @@ is never delegatecalled by them.
 ### Compatibility
 
 - **Storage**: one variable appended at the end (`seasonHunt`, after `energyGranter`). No struct changed.
-  `./check-layout.sh` and `./validate-upgrade.sh` pass against release 002.
+  `./check-layout.sh` and `./validate-upgrade.sh` passed against release 002 before the upgrade.
 - **ABI**: four functions added, nothing changed or removed. `cast` keeps its selector, its events and its
   reverts. The released `GameLens`, the released `Tournaments`, the released `DailyRewards` and a web client built
   before this change work with the new code as they are.
@@ -329,8 +329,8 @@ transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `Cre
 |---|---|---|
 | release 001, on Fluent Testnet until 24 November 2026 | 24,336 | 240 |
 | after the optimizations below (never deployed by itself) | 23,340 | 1,236 |
-| release 002, on Fluent Testnet now: the above plus the daily reward hook | 23,688 | 888 |
-| the source now, not deployed: the above plus the Season Hunt hook | 24,293 | 283 |
+| release 002, on Fluent Testnet on 24 November 2026: the above plus the daily reward hook | 23,688 | 888 |
+| release 003, on Fluent Testnet now: the above plus the Season Hunt hook | 24,293 | 283 |
 
 `DailyRewards`, the plain contract that goes with the daily reward hook, is 3,802 bytes; `SeasonHunt` is 15,455 and
 `DrandBeacon` 4,158. See "The daily reward" and "Season Hunt" above.

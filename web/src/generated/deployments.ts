@@ -33,6 +33,7 @@ export const deployments: Record<string, Deployment> = {
     "exchange": "0x40C87c35C4ec8c699B1235E0C888318675623c12",
     "tournaments": "0xf30af836B8054975FFF54D96db5eD4382640E951",
     "bottles": "0xe90E6D38A5531A7ce63eFea06E86229B977b781C",
-    "dailyRewards": "0xDDDb1066366525A560277e895B8A254c83cCCB35"
+    "dailyRewards": "0xDDDb1066366525A560277e895B8A254c83cCCB35",
+    "seasonHunt": "0xb09eA27cA0B980f4A1031FD19084F8EdA4dbe5E0"
   }
 };
