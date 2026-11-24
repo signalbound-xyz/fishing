@@ -10,6 +10,7 @@
     "build:api": "node scripts/build-api.mjs",
     "check:api": "node scripts/build-api.mjs --check",
     "api:dev": "node scripts/serve-api.mjs",
+    "keeper": "node scripts/keeper.mjs",
     "preview": "vite preview --port 4173",
     "typecheck": "tsc --noEmit",
     "test": "vitest run && node scripts/build-api.mjs --check",
@@ -17,7 +18,8 @@
     "sim:audit": "vitest run --config vitest.sim.config.ts sim/audit.sim.ts",
     "sim:daily": "vitest run --config vitest.sim.config.ts sim/daily.sim.ts",
     "sim:hunt": "vitest run --config vitest.sim.config.ts sim/hunt.sim.ts",
-    "live": "vitest run --config vitest.live.config.ts"
+    "live": "vitest run --config vitest.live.config.ts live/cup.live.ts",
+    "live:read": "vitest run --config vitest.live.config.ts live/chain.live.ts"
   },
   "dependencies": {
     "@fluent.xyz/connect": "0.8.5",

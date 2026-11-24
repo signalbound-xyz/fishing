@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test} from "forge-std/Test.sol";
+import {GameStateReader} from "./GameState.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {FishingGame} from "../src/FishingGame.sol";
 import {Tournaments} from "../src/Tournaments.sol";
@@ -24,7 +24,7 @@ import {SeasonHuntScript} from "../script/SeasonHunt.s.sol";
 ///         Skipped unless FORK_RPC names the network (an alias from foundry.toml or a URL):
 ///             FORK_RPC=fluent_testnet forge test --match-contract UpgradeForkTest -vv
 ///         Nothing is sent to the network and no key is needed: the upgrade is simulated as the proxy admin's owner.
-contract UpgradeForkTest is Test {
+contract UpgradeForkTest is GameStateReader {
     bytes32 internal constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
     bytes32 internal constant IMPL_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
     uint256 internal constant WEEKS_BACK = 12;
@@ -97,11 +97,100 @@ contract UpgradeForkTest is Test {
 
     /// @dev The upgrade exactly as script/Upgrade.s.sol sends it, checks included, as the proxy admins' owner.
     function _upgrade() internal {
+        _stillTheWater();
         Upgrade script = new Upgrade();
         address nextGame = script.rehearse("game", _admin(address(game)).owner());
         address nextCup = script.rehearse("tournaments", _admin(address(cup)).owner());
         assertEq(_implementation(address(game)), nextGame);
         assertEq(_implementation(address(cup)), nextCup);
+        // the lens goes with the game: the script deploys this build's lens unless the one in use already is it
+        lens = GameLens(script.lens());
+        assertEq(address(lens.game()), address(game));
+        if (game.castingPaused()) {
+            vm.prank(game.owner());
+            game.setCastingPaused(false);
+        }
+    }
+
+    /// @dev What the operator does before an upgrade once the live code counts its casts (release 004 on): pause,
+    ///      and reel in whoever has a cast in the water. The chain keeps no list of players, so a cast of somebody
+    ///      this test does not know of may remain; the rehearsal is then skipped, not faked.
+    function _stillTheWater() internal {
+        (bool counts,) = address(game).staticcall(abi.encodeWithSignature("castsInWater()"));
+        if (!counts) return;
+        vm.prank(game.owner());
+        game.setCastingPaused(true);
+        for (uint256 i; i < players.length; i++) {
+            uint64 target = _castOf(game, players[i]).targetBlock;
+            if (target == 0) continue;
+            if (block.number <= target) vm.roll(uint256(target) + 1);
+            game.reelFor(players[i]);
+        }
+        if (game.castsInWater() != 0) {
+            vm.skip(true, "a player this test cannot name has a cast in the water: rehearse again once it is reeled in");
+        }
+    }
+
+    /// @dev A getter of the released code, by signature: the current source no longer declares it.
+    function _ask(string memory signature, bytes memory args) internal view returns (bytes memory out) {
+        bool ok;
+        (ok, out) = address(game).staticcall(bytes.concat(bytes4(keccak256(bytes(signature))), args));
+        require(ok, signature);
+    }
+
+    /// @dev Release 004 moved five getters from the game to the lens, which reads the storage by slot. On the live
+    ///      state: what the released getters answer for every special fish, achievement and known player must be
+    ///      what the new lens reads after the upgrade. With a release that has no such getters there is nothing
+    ///      to compare with (test/GameLens.t.sol checks the lens then).
+    function test_theNewLensReadsTheLiveStateAsTheReleasedGettersDid() public onFork {
+        (bool has,) = address(game).staticcall(abi.encodeWithSignature("specialInfo(uint256)", 0));
+        if (!has) {
+            vm.skip(true, "the live game has no getters to compare the lens with");
+        }
+        uint256 week = game.currentWeek();
+        uint256 firstWeek = week > WEEKS_BACK ? week - WEEKS_BACK : 0;
+        uint256 nSpecials = game.specialCount();
+        uint256 nAchievements = game.achievementCount();
+        uint256 nLocations = game.locationCount();
+        bytes32 before;
+        for (uint256 i; i < nSpecials; i++) before = keccak256(abi.encode(before, _ask("specialInfo(uint256)", abi.encode(i))));
+        for (uint256 i; i < nAchievements; i++) before = keccak256(abi.encode(before, _ask("achievement(uint256)", abi.encode(i))));
+        for (uint256 k; k < players.length; k++) {
+            before = keccak256(abi.encode(before, _ask("bestCatch(address)", abi.encode(players[k]))));
+            for (uint256 l; l < nLocations; l++) {
+                before = keccak256(abi.encode(before, _ask("bestAt(address,uint256)", abi.encode(players[k], l))));
+            }
+            for (uint256 w = firstWeek; w <= week; w++) {
+                before = keccak256(abi.encode(before, _ask("weekEntries(uint256,address)", abi.encode(w, players[k]))));
+            }
+        }
+
+        _upgrade();
+
+        bytes32 after_;
+        FishingGame.Special[] memory specials = lens.specials();
+        FishingGame.Achievement[] memory achievements = lens.achievements();
+        assertEq(specials.length, nSpecials);
+        assertEq(achievements.length, nAchievements);
+        for (uint256 i; i < nSpecials; i++) after_ = keccak256(abi.encode(after_, abi.encode(specials[i])));
+        for (uint256 i; i < nAchievements; i++) after_ = keccak256(abi.encode(after_, abi.encode(achievements[i])));
+        uint256 catches;
+        for (uint256 k; k < players.length; k++) {
+            after_ = keccak256(abi.encode(after_, abi.encode(lens.bestCatch(players[k]))));
+            for (uint256 l; l < nLocations; l++) after_ = keccak256(abi.encode(after_, abi.encode(lens.bestAt(players[k], l))));
+            for (uint256 w = firstWeek; w <= week; w++) {
+                FishingGame.WeekEntry[] memory entries = lens.weekEntries(w, players[k]);
+                catches += entries.length;
+                after_ = keccak256(abi.encode(after_, abi.encode(entries)));
+            }
+        }
+        assertEq(after_, before, "the new lens reads the live state differently from the released getters");
+        assertGt(catches, 0, "nothing was compared");
+        // what the client asks for, for everyone the chain can name
+        lens.catalog();
+        for (uint256 k; k < players.length; k++) lens.playerView(players[k]);
+        emit log_named_uint("players compared", players.length);
+        emit log_named_uint("weekly catches compared", catches);
     }
 
     function test_theUpgradeScriptRefusesAStranger() public onFork {
@@ -111,10 +200,10 @@ contract UpgradeForkTest is Test {
     }
 
     function _playerState(address who) internal view returns (bytes32 h) {
-        h = keccak256(abi.encode(lens.playerView(who), pearl.balanceOf(who), fish.balanceOf(who)));
+        h = keccak256(abi.encode(_playerState(game, who), pearl.balanceOf(who), fish.balanceOf(who)));
         uint256 week = game.currentWeek();
         for (uint256 w = week > WEEKS_BACK ? week - WEEKS_BACK : 0; w <= week; w++) {
-            h = keccak256(abi.encode(h, game.weekEntries(w, who), game.weekTotal(w, who)));
+            h = keccak256(abi.encode(h, _weekState(game, w, who)));
         }
         uint256 t = cup.count();
         for (uint256 id; id < t; id++) h = keccak256(abi.encode(h, cup.entryOf(id, who)));
@@ -131,7 +220,7 @@ contract UpgradeForkTest is Test {
             (address[] memory top, uint32[] memory totals) = cup.standings(id);
             h = keccak256(abi.encode(h, cup.tournament(id), cup.termsOf(id), cup.pool(id), top, totals));
         }
-        h = keccak256(abi.encode(h, lens.catalog(), game.totalCasts(), game.owner(), cup.owner(), pearl.totalSupply(), fish.nextId()));
+        h = keccak256(abi.encode(h, _catalogState(game), game.totalCasts(), game.owner(), cup.owner(), pearl.totalSupply(), fish.nextId()));
         h = keccak256(abi.encode(h, address(cup.verifier()), cup.fightBlocks(), cup.blend().balanceOf(address(cup))));
     }
 
@@ -174,21 +263,21 @@ contract UpgradeForkTest is Test {
         uint256 casts = game.totalCasts();
         vm.prank(angler);
         game.cast(0);
-        uint64 target = game.castOf(angler).targetBlock;
+        uint64 target = _castOf(game, angler).targetBlock;
         vm.roll(target + 1);
         vm.setBlockhash(target, keccak256("fork"));
         vm.prank(angler);
         game.reel();
         assertEq(game.totalCasts(), casts + 1);
-        assertEq(game.castOf(angler).targetBlock, 0);
+        assertEq(_castOf(game, angler).targetBlock, 0);
         assertEq(game.playerOf(angler).casts, 1);
         // an existing player's cast, if one is in the water, can still be finished
         for (uint256 i; i < players.length; i++) {
-            uint64 pending = game.castOf(players[i]).targetBlock;
+            uint64 pending = _castOf(game, players[i]).targetBlock;
             if (pending == 0) continue;
             if (block.number <= pending) vm.roll(pending + 1);
             game.reelFor(players[i]);
-            assertEq(game.castOf(players[i]).targetBlock, 0);
+            assertEq(_castOf(game, players[i]).targetBlock, 0);
         }
     }
 
@@ -225,7 +314,7 @@ contract UpgradeForkTest is Test {
         for (uint256 i; i < 4; i++) {
             vm.prank(angler);
             game.cast(0);
-            uint64 target = game.castOf(angler).targetBlock;
+            uint64 target = _castOf(game, angler).targetBlock;
             vm.roll(target + 1);
             vm.setBlockhash(target, keccak256(abi.encode("fork", i)));
             vm.prank(angler);
@@ -275,7 +364,7 @@ contract UpgradeForkTest is Test {
     /// @dev What the game, the tokens and the fish hold for a player, without anything that moves with the clock.
     function _holdings(address who, IERC20 blend) internal view returns (bytes32) {
         return keccak256(
-            abi.encode(game.playerOf(who), game.castOf(who), pearl.balanceOf(who), fish.balanceOf(who), blend.balanceOf(who))
+            abi.encode(game.playerOf(who), _castOf(game, who), pearl.balanceOf(who), fish.balanceOf(who), blend.balanceOf(who))
         );
     }
 
@@ -339,7 +428,7 @@ contract UpgradeForkTest is Test {
         assertEq(seq, 0);
         assertEq(game.totalCasts(), casts + 1, "a seasonal cast is a cast of the game");
         assertEq(game.currentEnergy(lucky), 19, "the pond's energy was not charged");
-        uint64 target = game.castOf(lucky).targetBlock;
+        uint64 target = _castOf(game, lucky).targetBlock;
         assertGt(target, 0);
         assertEq(hunt.chance(id, 0, 0, 0), r.baseChance);
 
@@ -357,7 +446,7 @@ contract UpgradeForkTest is Test {
         vm.setBlockhash(target, keccak256("fork hunt"));
         vm.prank(lucky);
         game.reel();
-        assertEq(game.castOf(lucky).targetBlock, 0);
+        assertEq(_castOf(game, lucky).targetBlock, 0);
 
         // not final inside the window; after it the prize and the trophy
         vm.prank(lucky);
@@ -389,14 +478,14 @@ contract UpgradeForkTest is Test {
 
     function makeRoom(address who) external {
         for (uint256 i; game.currentEnergy(who) > 16; i++) {
-            uint64 pending = game.castOf(who).targetBlock;
+            uint64 pending = _castOf(game, who).targetBlock;
             if (pending != 0) {
                 if (block.number <= pending) vm.roll(pending + 1);
                 game.reelFor(who);
             }
             vm.prank(who);
             game.cast(0);
-            uint64 target = game.castOf(who).targetBlock;
+            uint64 target = _castOf(game, who).targetBlock;
             vm.roll(target + 1);
             vm.setBlockhash(target, keccak256(abi.encode("room", who, i)));
             game.reelFor(who);

@@ -103,7 +103,7 @@ export function initPond(sceneHost: HTMLElement, controlsHost: HTMLElement): () 
   window.addEventListener('pointerup', () => (holding = false));
   window.addEventListener('blur', () => (holding = false));
 
-  const renderControls = mount(controlsHost, () => sigOf(rev(), phase, viewLoc, energyNow(getSave(), Date.now()), state.wallet?.address, dailyBadge(), huntStripSig()), renderControlsView);
+  const renderControls = mount(controlsHost, () => sigOf(rev(), phase, viewLoc, energyNow(getSave(), Date.now()), state.wallet?.address, dailyBadge(), huntStripSig(), world.castingPaused), renderControlsView);
   return () => {
     renderControls();
     resumeChainCast();
@@ -347,7 +347,7 @@ async function watchChainCast(target: bigint): Promise<void> {
     deadNonce = world.cast?.nonce ?? null;
     scene.setPhase('idle');
     finish();
-    if (out.kind === 'expired') showMessage('Too late', 'More than 256 blocks passed, so the randomness for this cast is gone, and the fish with it.');
+    if (out.kind === 'expired') showMessage('Too late', 'Too much time passed: the chain no longer keeps the randomness for this cast, and the fish is gone with it.');
     else showMessage('Nothing is biting', 'The float never moved. A lure with catch brings more bites. No transaction needed: just cast again.');
     return;
   }
@@ -391,14 +391,17 @@ async function settleOnChain(): Promise<void> {
   const before = getSave();
   const receipt = await tx('Land the catch', { functionName: 'reel', args: [] }, true);
   if (!receipt) {
-    // rejected or failed: the catch is still there to be claimed until its block is 256 blocks old
+    // rejected or failed: the catch is still there to be claimed for as long as the chain keeps its block's hash
     await refresh();
     if (world.cast) {
       landRetry = true;
       setPhase('landing');
     } else {
+      // the cast is no longer in the water: somebody reeled it in for the player (anyone may; the operator does
+      // it for casts that are about to expire, and before a change of rules)
       scene.setPhase('idle');
       finish();
+      showMessage('Already reeled in', 'This cast was reeled in for you. Whatever it held is in your keepnet.');
     }
     return;
   }
@@ -414,7 +417,7 @@ async function settleOnChain(): Promise<void> {
   if (!out || out.kind === 'missed' || out.kind === 'expired') {
     scene.setPhase('missed');
     finish();
-    if (out?.kind === 'expired') showMessage('Too late', 'More than 256 blocks passed, so the randomness for this cast is gone, and the fish with it.');
+    if (out?.kind === 'expired') showMessage('Too late', 'Too much time passed: the chain no longer keeps the randomness for this cast, and the fish is gone with it.');
     else showMessage('It got away!', 'Nothing stayed on the hook this time.');
     return;
   }
@@ -481,7 +484,7 @@ async function legacyHookOnChain(): Promise<void> {
   const before = getSave();
   const receipt = await tx('Reel in', { functionName: 'reel', args: [] }, true);
   if (!receipt) {
-    // rejected or failed: the fish is still on the line (until the randomness block is 256 blocks old)
+    // rejected or failed: the fish is still on the line, for as long as the chain keeps the hash of its randomness block
     await refresh();
     if (world.cast) setPhase('bite');
     else {
@@ -497,7 +500,7 @@ async function legacyHookOnChain(): Promise<void> {
   if (!out || out.kind === 'missed' || out.kind === 'expired') {
     scene.setPhase('missed');
     finish();
-    if (out?.kind === 'expired') showMessage('Too late', 'More than 256 blocks passed, so the randomness for this cast is gone, and the fish with it.');
+    if (out?.kind === 'expired') showMessage('Too late', 'Too much time passed: the chain no longer keeps the randomness for this cast, and the fish is gone with it.');
     else showMessage('It got away!', 'Nothing stayed on the hook this time. A lure with catch brings more bites.');
     return;
   }
@@ -906,7 +909,8 @@ function renderControlsView(): HTMLElement[] {
   const out: HTMLElement[] = [];
 
   const guest = CHAIN && !state.wallet;
-  const reason = guest ? null : castBlocker(s, now);
+  // on the contracts the owner may stop new casts for a while; whatever is in the water is still reeled in
+  const reason = guest ? null : CHAIN && world.castingPaused ? 'Casting is paused for maintenance. It will be back shortly.' : castBlocker(s, now);
   const cost = LOCATIONS[s.location].energyCost;
   const hunting = guest ? null : huntCastArmed();
   out.push(

@@ -8,11 +8,12 @@ Hypothesis results for the first version are in **[REPORT.md](REPORT.md)**; the 
 
 | Folder | Contents |
 |---|---|
-| `contracts/` | Foundry project: `FishingGame` and `Tournaments` (both behind upgradeable proxies), `FightVerifier`, `BottlePool`, `GameLens`, `FishNFT`, `PearlToken`, `PearlExchange`, `Marketplace`, `DailyRewards`, `SeasonHunt` with its randomness beacons + 244 tests (6 of them on a fork of the live network), upgrade tooling ([UPGRADES.md](contracts/UPGRADES.md)) |
+| `contracts/` | Foundry project: `FishingGame` and `Tournaments` (both behind upgradeable proxies), `FightVerifier`, `BottlePool`, `GameLens`, `FishNFT`, `PearlToken`, `PearlExchange`, `Marketplace`, `DailyRewards`, `SeasonHunt` with its randomness beacons + 270 tests (7 of them on a fork of the live network), upgrade tooling ([UPGRADES.md](contracts/UPGRADES.md)) |
+| `contracts/script/Water.s.sol` | pausing and resuming casts before a change of rules ("Still water" in UPGRADES.md) |
 | `contracts/script/SeasonHunt.s.sol`, `contracts/script/seasons/` | deploying the hunt, announcing and funding a season; a season is a JSON file |
 | `contracts/script/GameSetup.sol` | catalog: species, locations, rods, lures, special fish, achievements, config |
 | `sim/` | model of the first version's formulas and an agent-based economy simulation (Python) |
-| `web/` | browser client (Vite + TypeScript + viem), see [web/README.md](web/README.md) |
+| `web/` | browser client (Vite + TypeScript + viem), see [web/README.md](web/README.md); the daily reward verifier and the operator's keeper ([web/KEEPER.md](web/KEEPER.md)) as serverless functions |
 | `deployments/` | contract addresses per chainId (written by the deploy script) |
 
 ## Quick start
@@ -95,6 +96,7 @@ TARGET=game forge script script/Upgrade.s.sol --rpc-url fluent_testnet --broadca
 
 - `preflight.sh` compares the storage layout of the new code with the code that is released (inside every struct too), runs OpenZeppelin's upgrade validation against the build of the released source, runs the tests (they start from the bytecode recorded from the chain, not from the current source) and, given a network, rehearses the upgrade on a fork of it. CI runs it on every change to `contracts/`.
 - `Upgrade.s.sol` changes the code and nothing else: no price, config or catalog entry. It refuses to run unless the proxy runs the recorded release, the token addresses match and the new implementation is this build. The economy is its own step (`script/Economy.s.sol`).
+- **Release 004 is built and not deployed** (the chain runs 003). It gives a cast 8,191 blocks to be landed instead of 256 (the chain's block-hash history, EIP-2935), makes the game refuse a change of its rules while a cast is in the water (the owner pauses casting, the keeper reels the casts in, then the change), and moves five views from the game into `GameLens` to make the room. From this release the lens ships with the game, and the client must be published right after the upgrade: UPGRADES.md, "Release 004".
 - `release.sh record` snapshots what the proxies run into `contracts/releases/` (addresses, code hash, bytecode, storage layout, ABI, compiler settings, source commit); `release.sh verify --source` rebuilds every release from its commit and compares it with the chain.
 
 `PearlToken`, `FishNFT`, the market and the exchange are plain contracts and are never replaced. Whoever owns the proxies can change the rules, so on a mainnet the owner should be a multisig with a delay.
@@ -106,6 +108,8 @@ The main competition: a season names one target fish and holds one BLEND prize, 
 A seasonal cast is an ordinary cast made through the hunt (`SeasonHunt.cast`): the game charges the same energy, wears the same rod, uses the same lure and lands the same ordinary catch. On top of it the hunt makes one separate draw for the target. Its chance is the season's base chance plus the bonuses of the rod, the lure and the water, added and capped (three times the base at most in the first season), so better tackle helps and nothing guarantees the fish. Ordinary fishing odds are not touched.
 
 The winner is the earliest cast that hooked the target, by the order in which casts were executed on the chain, not whoever reports first: anyone can record a hit for anyone, an earlier hit recorded later takes the catch over, and a hit is final when its recording window has passed. The winner claims the prize and a trophy fish of the target species, a real `FishNFT`. If nobody hooks it, the sponsor takes the prize back or rolls it into the next season.
+
+A hit counts once it is recorded on the chain within its window. The player's page does that; so that a closed tab does not lose a hit, the operator's keeper ([web/KEEPER.md](web/KEEPER.md)) records hits for everyone. It is built and not yet running: it needs a gas wallet and a schedule.
 
 The draw uses the [drand](https://drand.love) randomness beacon, whose signatures the contract verifies on the chain, because no VRF provider serves Fluent today and a block hash is the sequencer's to choose. The hunt is a contract of its own behind a small hook in `FishingGame` (`castFor`, `landFor`).
 

@@ -22,6 +22,11 @@ contract Economy is Script {
 
     /// @dev Must be called by the game's owner. Sends only the transactions that change something.
     function sync(FishingGame game) public {
+        // the config is a rule of the catch, and rules change only between casts (FishingGame.castsInWater)
+        require(
+            game.castsInWater() == 0,
+            "casts are in the water: pause casting (script/Water.s.sol) and reel them in (web: pnpm keeper --drain)"
+        );
         GameSetup.sync(game);
         console2.log("prices, repairs, energy and the bottle chance set on", address(game));
     }

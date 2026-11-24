@@ -449,9 +449,9 @@ contract FishingGameTest is BaseTest {
         (uint32 count, uint32 best) = game.dex(alice, f.speciesId);
         assertEq(count, 1);
         assertEq(best, f.weight);
-        (, uint32 w,) = game.bestCatch(alice);
+        uint32 w = lens.bestCatch(alice).weight;
         assertEq(w, f.weight);
-        FishingGame.WeekEntry[] memory week = game.weekEntries(game.currentWeek(), alice);
+        FishingGame.WeekEntry[] memory week = lens.weekEntries(game.currentWeek(), alice);
         assertEq(week.length, 1);
         assertEq(week[0].score, CatchMath.score(s.rarity, s.minWeight, s.maxWeight, f.weight, f.quality));
         assertEq(game.weekTotal(game.currentWeek(), alice), week[0].score);
@@ -478,7 +478,7 @@ contract FishingGameTest is BaseTest {
         uint256[] memory ids = new uint256[](25);
         for (uint256 i; i < 25; i++) ids[i] = _catch(alice, 0, 100 + i);
         uint256 week = game.currentWeek();
-        FishingGame.WeekEntry[] memory list = game.weekEntries(week, alice);
+        FishingGame.WeekEntry[] memory list = lens.weekEntries(week, alice);
         assertEq(list.length, 10);
         uint256 sum;
         for (uint256 i; i < 10; i++) {
@@ -498,10 +498,10 @@ contract FishingGameTest is BaseTest {
         uint32 total = game.weekTotal(week, alice);
         vm.warp((week + 1) * 1 weeks);
         assertEq(game.currentWeek(), week + 1);
-        assertEq(game.weekEntries(week + 1, alice).length, 0);
+        assertEq(lens.weekEntries(week + 1, alice).length, 0);
         _catch(alice, 0, 8);
         assertEq(game.weekTotal(week, alice), total);
-        assertEq(game.weekEntries(week + 1, alice).length, 1);
+        assertEq(lens.weekEntries(week + 1, alice).length, 1);
         (uint256[] memory ids, uint32[] memory totals) = lens.weekHistory(alice, 2);
         assertEq(ids[0], week);
         assertEq(totals[0], total);

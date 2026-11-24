@@ -102,6 +102,7 @@ contract FishingGame is Ownable {
         uint8 rod;
         uint8 lure; // 0 = none, else id + 1
         uint8 special; // active special bonus fixed at cast time: 0 = none, else id + 1
+        bool counted; // in `castsInWater`: false only for a cast made before that counter existed
     }
 
     struct Config {
@@ -149,6 +150,10 @@ contract FishingGame is Ownable {
 
     uint256 internal constant WEEK_SLOTS = 10;
 
+    /// @dev EIP-2935: the system contract that keeps the hashes of the last 8,191 blocks, at the same address on
+    ///      every chain that has it.
+    address internal constant BLOCK_HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
+
     // ------------------------------------------------------------------ storage
 
     PearlToken public immutable pearl;
@@ -173,8 +178,8 @@ contract FishingGame is Ownable {
     mapping(address => mapping(uint256 => uint32)) public lureCasts;
     mapping(address => mapping(uint256 => DexEntry)) public dex;
     mapping(address => mapping(uint256 => uint16)) public dryCatches;
-    mapping(address => Record) public bestCatch;
-    mapping(address => mapping(uint256 => Record)) public bestAt;
+    mapping(address => Record) internal bestCatch;
+    mapping(address => mapping(uint256 => Record)) internal bestAt;
     mapping(address => uint256) public blendWon;
     mapping(address => RefillState) internal refillState;
     mapping(uint256 => uint256) public mintedOnDay;
@@ -192,6 +197,15 @@ contract FishingGame is Ownable {
     /// @notice The one contract that may cast for a player and land a season's trophy (src/SeasonHunt.sol).
     ///         Zero: nobody can.
     address public seasonHunt;
+
+    /// @notice Casts that are in the water: made and not yet reeled in. The rules of a catch (`setConfig`,
+    ///         `updateLocation`, `setHidden`) can change only while this is zero, so every cast is decided by the
+    ///         rules it was made under.
+    uint64 public castsInWater;
+
+    /// @notice While set, nobody can cast. Casts already in the water are reeled in as always, which is how the
+    ///         water becomes still before a change of rules or a new version of this code.
+    bool public castingPaused;
 
     // ------------------------------------------------------------------ errors & events
 
@@ -216,6 +230,8 @@ contract FishingGame is Ownable {
     error NotCompleted();
     error AlreadyClaimed();
     error BadConfig();
+    error CastingPaused();
+    error WaterNotStill();
 
     event Casted(address indexed player, uint8 locationId, uint8 rod, uint8 lure, uint64 targetBlock);
     event Caught(
@@ -261,6 +277,7 @@ contract FishingGame is Ownable {
     }
 
     function setConfig(Config calldata c) external onlyOwner {
+        _stillWater();
         if (
             c.maxEnergy == 0 || c.energyRegenSeconds == 0 || c.revealDelay == 0 || c.maxBiteBps > 10_000
                 || c.baseBiteBps > c.maxBiteBps || c.refillPriceGrowthBps < 10_000
@@ -288,6 +305,7 @@ contract FishingGame is Ownable {
     }
 
     function updateLocation(uint256 id, Location calldata l) external onlyOwner {
+        _stillWater();
         if (id >= _locations.length) revert UnknownLocation();
         _validateLocation(l);
         _locations[id] = l;
@@ -314,7 +332,21 @@ contract FishingGame is Ownable {
     }
 
     function setHidden(uint256 speciesId, bool hidden) external onlyOwner {
+        _stillWater();
         hiddenSpecies[speciesId] = hidden;
+    }
+
+    /// @notice Stops new casts, or lets them be made again. It touches nothing else: casts in the water are
+    ///         reeled in as always, energy regenerates, fish are sold.
+    function setCastingPaused(bool paused) external onlyOwner {
+        castingPaused = paused;
+    }
+
+    /// @dev What decides a catch changes only between casts, never under one. Adding a rod, a lure, a location or
+    ///      a special fish is not a change of rules: a cast in the water names tackle and a location that already
+    ///      exist, and their numbers stay as they are.
+    function _stillWater() internal view {
+        if (castsInWater != 0) revert WaterNotStill();
     }
 
     /// @notice Reprices a rod (or a lure) and its full repair (whole PEARL, rods only). Rods already bought stay
@@ -588,6 +620,7 @@ contract FishingGame is Ownable {
     }
 
     function _cast(address player, uint8 locationId) internal {
+        if (castingPaused) revert CastingPaused();
         Cast storage active = casts[player];
         if (active.targetBlock != 0) {
             // Convenience: a finished cast is resolved automatically before the new one.
@@ -630,7 +663,8 @@ contract FishingGame is Ownable {
         if (special != 0 && fishNft.heldOf(player, _specials[special - 1].speciesId) == 0) special = 0;
 
         uint64 target = uint64(block.number) + config.revealDelay;
-        casts[player] = Cast(target, p.casts, locationId, rod, lure, special);
+        casts[player] = Cast(target, p.casts, locationId, rod, lure, special, true);
+        castsInWater += 1;
         p.casts += 1;
         totalCasts += 1;
         emit Casted(player, locationId, rod, lure, target);
@@ -674,10 +708,11 @@ contract FishingGame is Ownable {
         if (c.targetBlock == 0) revert NoActiveCast();
         if (block.number <= c.targetBlock) revert TooEarly();
         delete casts[player];
+        if (c.counted) castsInWater -= 1;
 
-        bytes32 bh = blockhash(c.targetBlock);
+        bytes32 bh = _hashOf(c.targetBlock);
         if (bh == bytes32(0)) {
-            // older than 256 blocks: the randomness is gone, so is the fish
+            // older than the chain remembers: the randomness is gone, so is the fish
             emit CastExpired(player);
             return;
         }
@@ -725,6 +760,23 @@ contract FishingGame is Ownable {
         if (!isSpecial) speciesId = _pickSpecies(l, rarityBonus, hiddenMult, seed >> 64);
 
         _land(player, p, c.locationId, speciesId, isSpecial, weightBonus, rodCatch, seed);
+    }
+
+    /// @dev The hash of a past block, or zero when the chain no longer has it. The EVM itself serves the last 256
+    ///      blocks; the block-hash history contract of EIP-2935 serves the last 8,191 (`HISTORY_WINDOW`), which
+    ///      turns a few minutes to reel a cast in into more than two hours. That contract answers with the hash,
+    ///      and reverts for a block outside its window; on a chain without it the call returns nothing. Either
+    ///      way the hash stays zero and the cast is expired, as before.
+    function _hashOf(uint256 blockNo) internal view returns (bytes32 h) {
+        h = blockhash(blockNo);
+        if (h == bytes32(0)) {
+            address history = BLOCK_HISTORY;
+            assembly ("memory-safe") {
+                mstore(0, blockNo)
+                // two steps, in this order: the size is of this call's answer, not of an earlier one
+                if staticcall(gas(), history, 0, 32, 0, 32) { if eq(returndatasize(), 32) { h := mload(0) } }
+            }
+        }
     }
 
     function _land(
@@ -848,10 +900,6 @@ contract FishingGame is Ownable {
         emit WeekScore(week, player, total);
     }
 
-    function weekEntries(uint256 week, address player) external view returns (WeekEntry[] memory) {
-        return _week[week][player];
-    }
-
     function weekPlayerCount(uint256 week) external view returns (uint256) {
         return _weekPlayers[week].length;
     }
@@ -924,6 +972,20 @@ contract FishingGame is Ownable {
 
     // ------------------------------------------------------------------ views (GameLens batches these for clients)
 
+    /// @notice `n` words of this contract's storage from `slot` on, as they are stored. What the game itself never
+    ///         reads back as a whole (a special fish, an achievement, a player's records and weekly catches) has
+    ///         no getter here: GameLens reads the words and gives them their names, which keeps this contract
+    ///         under the size limit. Storage is public on a chain; this only saves the reader an RPC call per word.
+    function extsload(uint256 slot, uint256 n) external view returns (bytes32[] memory) {
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            mstore(p, 0x20)
+            mstore(add(p, 0x20), n)
+            for { let i := 0 } lt(i, n) { i := add(i, 1) } { mstore(add(p, add(0x40, shl(5, i))), sload(add(slot, i))) }
+            return(p, add(0x40, shl(5, n)))
+        }
+    }
+
     function rodCount() external view returns (uint256) {
         return _rods.length;
     }
@@ -952,16 +1014,8 @@ contract FishingGame is Ownable {
         return _specials.length;
     }
 
-    function specialInfo(uint256 id) external view returns (Special memory) {
-        return _specials[id];
-    }
-
     function achievementCount() external view returns (uint256) {
         return _achievements.length;
-    }
-
-    function achievement(uint256 id) external view returns (Achievement memory) {
-        return _achievements[id];
     }
 
     function playerOf(address who) external view returns (Player memory) {

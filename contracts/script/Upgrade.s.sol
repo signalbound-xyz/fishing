@@ -9,6 +9,7 @@ import {PearlToken} from "../src/PearlToken.sol";
 import {FishNFT} from "../src/FishNFT.sol";
 import {FishingGame, IBottlePool} from "../src/FishingGame.sol";
 import {Tournaments} from "../src/Tournaments.sol";
+import {GameLens} from "../src/GameLens.sol";
 
 /// @notice Points a proxy at the current code, keeping its address and every player's state. It changes the code and
 ///         nothing else: no price, no config value, no catalog entry. The economy is a separate, explicit step
@@ -22,7 +23,14 @@ import {Tournaments} from "../src/Tournaments.sol";
 ///           - the new implementation is this build (bytecode compared with out/, immutables aside) and fits the
 ///             contract size limit;
 ///           - the sender owns the proxy's ProxyAdmin;
+///           - the water is still: from release 004 on the game counts the casts in the water, and new code is
+///             installed only while casting is paused and that count is zero, so that no cast is decided by code
+///             other than the code it was made under (script/Water.s.sol pauses, `pnpm keeper --drain` reels in);
 ///           - after the upgrade the proxy runs the new code and its owner, config and counters read as before.
+///
+///         The lens goes with the game: GameLens reads part of the game's storage by slot, so a game upgrade also
+///         deploys the lens of this build (unless the one in deployments/<chainId>.json already is this build) and
+///         writes its address there. The web client takes the address from that file: rebuild and redeploy it.
 ///
 ///         Read contracts/UPGRADES.md first; ./preflight.sh runs the checks that do not fit in a script.
 ///           TARGET=game|tournaments forge script script/Upgrade.s.sol --rpc-url <rpc> --broadcast --private-key <owner>
@@ -42,7 +50,11 @@ contract Upgrade is Script {
         ProxyAdmin admin;
         address current;
         address[3] deps; // game: pearl, fish, bottles. tournaments: game, fish, blend
+        address lens; // game only: the lens the clients use now
     }
+
+    /// @notice The lens the clients must use after the last game upgrade made by this script.
+    address public lens;
 
     /// @dev A byte range of the runtime code that holds an immutable (the artifact has zeroes there).
     struct Range {
@@ -58,6 +70,7 @@ contract Upgrade is Script {
         vm.startBroadcast();
         address impl = _upgrade(p, address(0));
         vm.stopBroadcast();
+        _recordLens(p);
         _report(p, impl);
     }
 
@@ -68,6 +81,7 @@ contract Upgrade is Script {
         vm.startBroadcast();
         address impl = _upgrade(p, vm.envAddress("IMPL"));
         vm.stopBroadcast();
+        _recordLens(p);
         _report(p, impl);
     }
 
@@ -129,6 +143,7 @@ contract Upgrade is Script {
             _same(p.deps[0], vm.parseJsonAddress(json, ".pearl"), "pearl");
             _same(p.deps[1], vm.parseJsonAddress(json, ".fish"), "fish");
             _same(p.deps[2], vm.parseJsonAddress(json, ".bottles"), "bottles");
+            p.lens = vm.parseJsonAddress(json, ".lens");
         } else {
             Tournaments t = Tournaments(p.proxy);
             p.deps = [address(t.game()), address(t.fishNft()), address(t.blend())];
@@ -206,12 +221,45 @@ contract Upgrade is Script {
         _checkImplementation(p, impl);
         require(impl != p.current, "the proxy already runs this implementation");
 
+        if (p.isGame) _requireStillWater(p.proxy);
+
         bytes32 before = _fingerprint(p);
         p.admin.upgradeAndCall(ITransparentUpgradeableProxy(p.proxy), impl, "");
 
         require(address(uint160(uint256(vm.load(p.proxy, IMPL_SLOT)))) == impl, "the proxy does not run the new implementation");
         require(_fingerprint(p) == before, "the owner, the config or a counter reads differently after the upgrade");
+        if (p.isGame) _shipLens(p);
         return impl;
+    }
+
+    /// @dev New code may decide a catch differently, so it is installed between casts, never under one. A release
+    ///      that does not count its casts yet (up to 003) cannot be asked: its casts in the water are landed by
+    ///      the new code, as test/Upgrade.t.sol rehearses.
+    function _requireStillWater(address game) internal view {
+        (bool counts, bytes memory n) = game.staticcall(abi.encodeWithSignature("castsInWater()"));
+        if (!counts) return;
+        require(FishingGame(game).castingPaused(), "casting is not paused: forge script script/Water.s.sol --sig 'pause()' first");
+        require(abi.decode(n, (uint64)) == 0, "casts are in the water: reel them in first (web: pnpm keeper --drain)");
+    }
+
+    /// @dev The lens of this build, reading the upgraded game. Kept when the lens in use already is this build.
+    function _shipLens(Plan memory p) internal {
+        lens = p.lens;
+        if (lens.code.length == 0 || !_isThisBuild("GameLens", lens) || address(GameLens(lens).game()) != p.proxy) {
+            lens = address(new GameLens(FishingGame(p.proxy)));
+        }
+        // it must read the game it was just pointed at: the catalog, and a player
+        GameLens(lens).catalog();
+        GameLens(lens).playerView(FishingGame(p.proxy).owner());
+    }
+
+    /// @dev After a broadcast: the new lens goes where the clients look for it.
+    function _recordLens(Plan memory p) internal {
+        if (!p.isGame || lens == p.lens) return;
+        string memory path = string.concat(vm.projectRoot(), "/../deployments/", vm.toString(block.chainid), ".json");
+        vm.writeJson(vm.toString(lens), path, ".lens");
+        console2.log("new lens            ", lens);
+        console2.log("written to deployments/: run `pnpm sync && pnpm build:api` in web/ and redeploy the client");
     }
 
     function _report(Plan memory p, address impl) internal view {

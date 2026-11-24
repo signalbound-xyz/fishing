@@ -13,6 +13,113 @@ export const gameLensAbi = [
   },
   {
     "type": "function",
+    "name": "achievements",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "list",
+        "type": "tuple[]",
+        "internalType": "struct FishingGame.Achievement[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "arg",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "reward",
+            "type": "uint96",
+            "internalType": "uint96"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bestAt",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "locationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct FishingGame.Record",
+        "components": [
+          {
+            "name": "speciesId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "weight",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "at",
+            "type": "uint40",
+            "internalType": "uint40"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bestCatch",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct FishingGame.Record",
+        "components": [
+          {
+            "name": "speciesId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "weight",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "at",
+            "type": "uint40",
+            "internalType": "uint40"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "catalog",
     "inputs": [],
     "outputs": [
@@ -645,6 +752,11 @@ export const gameLensAbi = [
                 "name": "special",
                 "type": "uint8",
                 "internalType": "uint8"
+              },
+              {
+                "name": "counted",
+                "type": "bool",
+                "internalType": "bool"
               }
             ]
           },
@@ -740,6 +852,117 @@ export const gameLensAbi = [
                 "internalType": "uint40"
               }
             ]
+          },
+          {
+            "name": "castingPaused",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "specials",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "list",
+        "type": "tuple[]",
+        "internalType": "struct FishingGame.Special[]",
+        "components": [
+          {
+            "name": "speciesId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "chancePpm",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "pity",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "mask",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "catchPts",
+            "type": "int8",
+            "internalType": "int8"
+          },
+          {
+            "name": "rarity",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "weight",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "hiddenMult",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "weekEntries",
+    "inputs": [
+      {
+        "name": "week",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "list",
+        "type": "tuple[]",
+        "internalType": "struct FishingGame.WeekEntry[]",
+        "components": [
+          {
+            "name": "score",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "speciesId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "weight",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "quality",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "at",
+            "type": "uint40",
+            "internalType": "uint40"
           }
         ]
       }

@@ -19,6 +19,8 @@ export const ERRORS: Record<string, string> = {
   NotEnoughEnergy: 'Not enough energy',
   EnergyFull: 'Energy is already full',
   CastInProgress: 'The line is already in the water',
+  CastingPaused: 'Casting is paused for maintenance. It will be back shortly; a cast already in the water can be reeled in.',
+  WaterNotStill: 'Casts are in the water: the rules can change only between casts',
   NoActiveCast: 'No active cast',
   TooEarly: 'Too early: waiting for the target block',
   NotFishOwner: 'One of these fish is not yours any more',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CHANCE_UNIT, MAX_CHANCE, atLeastOnce, bestChance, bonusParts, chanceOf, countdown, drandRound, drandTime, idsOf, levelOfXp, oddsText, shareText, timesText, type HuntOdds } from './hunt';
+import { CHANCE_UNIT, MAX_CHANCE, atLeastOnce, bestChance, bonusParts, chanceOf, countdown, drandRound, drandTime, huntHit, huntSeed, idsOf, levelOfXp, oddsText, shareText, timesText, type HuntDraw, type HuntOdds } from './hunt';
+import vectors from './fixtures/hunt.json';
 
 // The season of contracts/test/SeasonHunt.t.sol (`_rules`), and the chances the contract gives for it there.
 const ODDS: HuntOdds = {
@@ -119,5 +120,36 @@ describe('the drand round of an attempt', () => {
   it('never goes below round 1', () => {
     expect(drandRound(net, 0)).toBe(1);
     expect(drandTime(net, 1)).toBe(net.genesis);
+  });
+});
+
+// Attempts the contract decided (contracts/test/SeasonHunt.t.sol, HuntVectorsTest): its randomness, what it was
+// drawn for, and whether `SeasonHunt.outcome` said it hooked the target.
+describe('the draw of an attempt', () => {
+  const list = vectors as (HuntDraw & { chance: number; hit: boolean })[];
+
+  it('is the contract’s, for every recorded attempt', () => {
+    expect(list.length).toBeGreaterThan(30);
+    expect(list.filter((v) => v.hit).length).toBeGreaterThan(10);
+    expect(list.filter((v) => !v.hit).length).toBeGreaterThan(10);
+    for (const v of list) expect(huntHit(v, v.chance), `season ${v.season} attempt ${v.seq}`).toBe(v.hit);
+  });
+
+  it('belongs to one attempt only: another player, number, season, hunt or chain draws something else', () => {
+    const v = list[0];
+    const seed = huntSeed(v);
+    expect(huntSeed({ ...v, seq: v.seq + 1 })).not.toBe(seed);
+    expect(huntSeed({ ...v, season: v.season + 1 })).not.toBe(seed);
+    expect(huntSeed({ ...v, chainId: 20994 })).not.toBe(seed);
+    expect(huntSeed({ ...v, player: list[1].player })).not.toBe(seed);
+    expect(huntSeed({ ...v, hunt: v.player })).not.toBe(seed);
+    expect(huntSeed({ ...v, randomness: list[1].randomness })).not.toBe(seed);
+  });
+
+  it('never hooks with no chance, and always with a certain one', () => {
+    for (const v of list.slice(0, 10)) {
+      expect(huntHit(v, 0)).toBe(false);
+      expect(huntHit(v, CHANCE_UNIT)).toBe(true);
+    }
   });
 });

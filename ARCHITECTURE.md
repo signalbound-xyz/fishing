@@ -79,8 +79,12 @@ The prediction decides nothing, but a wrong one would show the player a fish tha
   is not replayed.
 - **Reload or a second tab mid-cast:** the pending cast is read from the contract and the bite is staged again.
 - **Double settlement:** the contract deletes the cast when it settles; a second `reel()` reverts `NoActiveCast`.
-- **Expiry:** a block hash is readable for 256 blocks (about four minutes). If retries run long, the client settles
-  with ~45 blocks to spare. Past that the cast is void, which is the contract's rule, not the client's.
+- **Expiry:** a cast can be landed for as long as the chain has the hash of its randomness block. From release 004
+  that is 8,191 blocks on Fluent, a little over two hours (the chain's block-hash history, EIP-2935); on release
+  003 and on a chain without the history it is 256 blocks, about four minutes. The client asks the chain which it
+  is and settles with blocks to spare; past the window the cast is void, which is the contract's rule, not the
+  client's. The operator's keeper reels in casts that are about to expire ([web/KEEPER.md](web/KEEPER.md)), so a
+  closed tab does not lose the fish once the keeper runs.
 
 ## Randomness
 
@@ -100,10 +104,13 @@ nonce and the contract address. This is **not** manipulation-resistant randomnes
   (`test_revertingAPoorOutcomeCannotRedrawIt`, `test_whoFinishesACastDoesNotChangeTheFish`).
 - **What is fixed at the cast and what is read at the reel.** Fixed: the water, the rod, the lure, the active
   special bonus, the block (`test_tackleIsFixedAtCastTime`, `test_activeSpecialIsFixedAtCastTime`). Read when
-  the cast is landed: the config and the catalog (see "Rules in flight" in `contracts/UPGRADES.md`), the pity
-  counter, and, for a bottle, the pool's own conditions (the player's level, today's limit, BLEND left). A player
-  who already knows the draw can still change those last ones for up to 256 blocks, about four minutes; with
-  the bottle switched off, as it is, nothing there is worth anything.
+  the cast is landed: the config and the catalog, the pity counter, and, for a bottle, the pool's own conditions
+  (the player's level, today's limit, BLEND left). From release 004 the config and the catalog cannot change
+  under a cast: the game counts the casts in the water and refuses `setConfig`, `updateLocation` and `setHidden`
+  while there is one ("Still water" in `contracts/UPGRADES.md`, which also says what that does not reach: the
+  species table, the bottle rules, the code behind the proxy). A player who already knows the draw can still
+  change the pity counter and the bottle's conditions for as long as the cast can be landed, 8,191 blocks from
+  release 004; with the bottle switched off, as it is, nothing there is worth anything.
 - **Value at stake.** Today: testnet tokens and NFTs with no market. That is why this is acceptable now.
 
 Before anything with real value rides on a catch, the source should be a VRF or a randomness beacon.
@@ -120,16 +127,18 @@ the round's signature, at the price of about 35 seconds between the cast and the
 [potion-game](https://github.com/signalbound-xyz/potion-game), another game on Fluent, was read on 24 November
 2026 for its random draws (`docs/SETTLEMENT.md` there). Its protocol and this one have the same shape: the player's
 transaction spends the attempt and fixes a future block, a later transaction that anyone may send lands the result,
-nothing can be redrawn, and after 256 blocks the result is forfeited with no refund and no other seed.
+nothing can be redrawn, and after 256 blocks (here, from release 004, 8,191) the result is forfeited with no
+refund and no other seed.
 
 | | potion-game | This game |
 |---|---|---|
 | Entropy | `PREVRANDAO` of block N+1, read in that block or later proven from its RLP header against `blockhash` | `blockhash` of block N+2 |
 | Earliest result | block N+1 | block N+3 |
 | Who can bias it | the block producer | the block producer |
-| Inputs fixed at the request | the whole fight as a snapshot, the rules contract, the verifier's code hash | water, rod, lure, special bonus; the catalog and config are read at the reel |
+| Inputs fixed at the request | the whole fight as a snapshot, the rules contract, the verifier's code hash | water, rod, lure, special bonus; the catalog and config are read at the reel, and from release 004 cannot change while a cast is in the water |
 | Sub-draws | one tagged hash per draw | slices of one 256-bit seed |
-| Left unfinished | an operator's settler finishes or expires it every minute | the player's client; anyone may call `reelFor` |
+| Left unfinished | an operator's settler finishes or expires it every minute | the player's client; anyone may call `reelFor`; the operator's keeper (built, not yet running) |
+| Time to finish | 256 blocks | 256 blocks; 8,191 from release 004 |
 
 - **The entropy is the same in strength.** Fluent's block producer fills `PREVRANDAO` with fresh random bytes for
   every block (`prev_randao: B256::random()` in the node's payload builder, checked at the revision the testnet
@@ -143,35 +152,16 @@ nothing can be redrawn, and after 256 blocks the result is forfeited with no ref
   by less than 0.03 percentage points. Not worth a change that would alter every recorded test vector.
 - **Taken:** the adversarial tests above, which potion-game has and this game lacked, and this account of where
   the guarantees end.
-- **Worth taking next, each a decision:** an operator's settler (for Season Hunt hits first, see SEASON_HUNT.md,
-  "Before a public launch", and for casts about to expire); fixing the rules of a cast when it is made, which
-  needs room in `FishingGame`; and, not from potion-game, the EIP-2935 history contract, which the testnet
-  serves, to read block hashes for 8,191 blocks instead of 256 so that a closed tab does not lose the fish.
-
-## Tournaments: where skill does decide
-
-In free play the fight changes nothing onchain. Tournaments are the opposite by design, and they do it without a
-server: the fight itself is verified by the contract.
-
-1. `Tournaments.cast(id)` spends one of the player's casts and commits to block `N+2`.
-2. Once that block exists the fish is fixed and public (`web/src/game/tournamentRoll.ts` mirrors
-   `Tournaments._roll`), and so is the fight seed.
-3. The browser runs the fight as an integer machine on a fixed 50 ms tick (`web/src/game/fight.ts`), driven by
-   one bit per tick: is the player reeling. It records the bits.
-4. `Tournaments.reel(id, inputs)` hands the recording to `FightVerifier.replay`, the same machine in Solidity, and
-   scores what it reports: nothing for a lost fish, otherwise the fish's points × (50% + 50% × share of ticks in
-   the green).
-
-The two implementations are pinned together by vectors: `fixtures/fights.json` (fights recorded by the client,
-replayed by the Solidity tests) and `fixtures/tournament.json` (draws made by the contract, replayed by the client
-tests), plus `pnpm live`, which plays a tournament on the deployed contracts and compares every score.
-
-What this does and does not prove: the contract never trusts a result from the browser, only an input, and it
-computes the result itself. It cannot tell who produced the input. The seed is public, so a bot can search for a
-perfect recording, and a person can retry a fight by reloading until the deadline (about two minutes from the
-bite). Mitigations that need no server: the deadline, the cast limit, equal tackle, a rod that must be owned to enter. Mitigations that do:
-an allow-list of entrants, or a referee that streams the fish live and co-signs the result (`setVerifier` and an
-upgrade leave room for both).
+- **Taken since, in release 004 and beside it** (built and rehearsed; the upgrade and the keeper's key are the
+  operator's to switch on):
+  - *An operator's settler.* The keeper records Season Hunt hits for the players and reels in casts about to
+    expire ([web/KEEPER.md](web/KEEPER.md)). Like potion-game's, it sends only what anyone may send and decides
+    nothing; unlike it, it is not needed for a result to exist, only for it not to be lost.
+  - *The rules of a cast fixed when it is made.* potion-game stores a snapshot with every request. Here there
+    was no room for that, so the game holds the rules still instead: no change of config or pools while a cast
+    is in the water, and a pause that lets the operator drain it.
+  - *Not from potion-game:* the EIP-2935 history contract, which Fluent serves, gives a cast 8,191 blocks instead
+    of 256.
 
 ## Contract changes that would help (none are deployed)
 

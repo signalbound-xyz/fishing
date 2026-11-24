@@ -8,6 +8,8 @@
  * The first attempt, in the order the casts entered the chain, that hooks the target wins the whole prize.
  */
 
+import { encodeAbiParameters, keccak256, type Address, type Hex } from 'viem';
+
 /** Chances are whole numbers of billionths, as in the contract. */
 export const CHANCE_UNIT = 1_000_000_000;
 /** No attempt, with any tackle, is more likely than one in ten. */
@@ -67,6 +69,38 @@ export function shareText(p: number): string {
   if (pct < 10) return `${pct.toFixed(1)}%`;
   return `${Math.round(pct)}%`;
 }
+
+// ------------------------------------------------------------------ the draw of an attempt
+
+/** What decides one attempt, besides its chance: SeasonHunt._roll. */
+export interface HuntDraw {
+  /** The beacon's value for the attempt (drand: sha256 of the round's signature; blockhash: the block's hash). */
+  randomness: Hex;
+  chainId: number;
+  hunt: Address;
+  season: number;
+  seq: number;
+  player: Address;
+}
+
+/** The attempt's own draw: no other attempt, season, contract or chain shares it. */
+export function huntSeed(d: HuntDraw): bigint {
+  return BigInt(
+    keccak256(
+      encodeAbiParameters(
+        [{ type: 'bytes32' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint256' }, { type: 'uint64' }, { type: 'address' }],
+        [d.randomness, BigInt(d.chainId), d.hunt, BigInt(d.season), BigInt(d.seq), d.player],
+      ),
+    ),
+  );
+}
+
+/**
+ * Whether an attempt with this draw and this chance (billionths) hooked the target. The contract is what decides
+ * (`outcome`, `settle`); this is the same arithmetic off the chain, so that the operator's keeper does not have to
+ * ask the contract about every miss. Replayed against the contract's own answers in hunt.test.ts.
+ */
+export const huntHit = (d: HuntDraw, chance: number): boolean => huntSeed(d) % BigInt(CHANCE_UNIT) < BigInt(chance);
 
 /** The season's states, in the order of the contract's enum. */
 export const HUNT_STATUS = ['upcoming', 'active', 'closing', 'winner', 'expired', 'cancelled'] as const;

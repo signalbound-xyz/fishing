@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GameSetup} from "../script/GameSetup.sol";
@@ -11,6 +10,7 @@ import {FishingGame, IBottlePool} from "../src/FishingGame.sol";
 import {Marketplace} from "../src/Marketplace.sol";
 import {GameLens} from "../src/GameLens.sol";
 import {BottlePool} from "../src/BottlePool.sol";
+import {GameStateReader} from "./GameState.sol";
 
 contract MockBlend is ERC20 {
     constructor() ERC20("Mock Blend", "BLEND") {}
@@ -20,7 +20,7 @@ contract MockBlend is ERC20 {
     }
 }
 
-abstract contract BaseTest is Test {
+abstract contract BaseTest is GameStateReader {
     uint256 internal constant E = 1e18;
 
     address internal owner = makeAddr("owner");
@@ -70,7 +70,7 @@ abstract contract BaseTest is Test {
     function _fishOnce(address who, uint8 locationId, bytes32 entropy) internal returns (uint256 fishId) {
         vm.prank(who);
         game.cast(locationId);
-        uint64 target = game.castOf(who).targetBlock;
+        uint64 target = _castOf(who).targetBlock;
         vm.roll(target + 1);
         vm.setBlockhash(target, entropy);
         uint256 before = fish.nextId();
@@ -85,6 +85,11 @@ abstract contract BaseTest is Test {
             if (game.currentEnergy(who) < 4) _rest();
             fishId = _fishOnce(who, locationId, keccak256(abi.encode(salt, i)));
         }
+    }
+
+    /// @dev `game.castOf`, also on a release that did not have the struct's last field (test/GameState.sol).
+    function _castOf(address who) internal view returns (FishingGame.Cast memory) {
+        return _castOf(game, who);
     }
 
     function _player(address who) internal view returns (FishingGame.Player memory) {

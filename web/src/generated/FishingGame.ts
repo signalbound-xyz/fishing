@@ -23,42 +23,6 @@ export const fishingGameAbi = [
   },
   {
     "type": "function",
-    "name": "achievement",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct FishingGame.Achievement",
-        "components": [
-          {
-            "name": "kind",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "arg",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "reward",
-            "type": "uint96",
-            "internalType": "uint96"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "achievementCount",
     "inputs": [],
     "outputs": [
@@ -459,69 +423,6 @@ export const fishingGameAbi = [
   },
   {
     "type": "function",
-    "name": "bestAt",
-    "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "speciesId",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "weight",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "at",
-        "type": "uint40",
-        "internalType": "uint40"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bestCatch",
-    "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "speciesId",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "weight",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "at",
-        "type": "uint40",
-        "internalType": "uint40"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "blendWon",
     "inputs": [
       {
@@ -654,8 +555,39 @@ export const fishingGameAbi = [
             "name": "special",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "counted",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "castingPaused",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "castsInWater",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"
@@ -884,6 +816,30 @@ export const fishingGameAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "extsload",
+    "inputs": [
+      {
+        "name": "slot",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "n",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1769,6 +1725,19 @@ export const fishingGameAbi = [
   },
   {
     "type": "function",
+    "name": "setCastingPaused",
+    "inputs": [
+      {
+        "name": "paused",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setConfig",
     "inputs": [
       {
@@ -1949,67 +1918,6 @@ export const fishingGameAbi = [
   },
   {
     "type": "function",
-    "name": "specialInfo",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct FishingGame.Special",
-        "components": [
-          {
-            "name": "speciesId",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "chancePpm",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "pity",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "mask",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "catchPts",
-            "type": "int8",
-            "internalType": "int8"
-          },
-          {
-            "name": "rarity",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "weight",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "hiddenMult",
-            "type": "uint8",
-            "internalType": "uint8"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "syncUnlocks",
     "inputs": [
       {
@@ -2114,57 +2022,6 @@ export const fishingGameAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "weekEntries",
-    "inputs": [
-      {
-        "name": "week",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "player",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple[]",
-        "internalType": "struct FishingGame.WeekEntry[]",
-        "components": [
-          {
-            "name": "score",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "speciesId",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "weight",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "quality",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "at",
-            "type": "uint40",
-            "internalType": "uint40"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -2605,6 +2462,11 @@ export const fishingGameAbi = [
   },
   {
     "type": "error",
+    "name": "CastingPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EnergyFull",
     "inputs": []
   },
@@ -2708,6 +2570,11 @@ export const fishingGameAbi = [
   {
     "type": "error",
     "name": "UnknownSpecial",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WaterNotStill",
     "inputs": []
   }
 ] as const;

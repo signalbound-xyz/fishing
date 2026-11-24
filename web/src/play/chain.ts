@@ -3,11 +3,12 @@
  * `Save` shape the local game uses, so the UI does not care where the state lives; writes go out as transactions.
  * Here the chain is the source of truth: nothing in localStorage decides a catch, a balance or an unlock.
  */
-import { erc20Abi, formatEther, parseEther, parseEventLogs, type Address, type TransactionReceipt } from 'viem';
+import { encodeFunctionData, erc20Abi, formatEther, pad, parseEther, parseEventLogs, toHex, type Address, type Hex, type TransactionReceipt } from 'viem';
 import { bottlePoolAbi, fishingGameAbi, gameLensAbi, pearlExchangeAbi } from '../abi';
 import { publicClient } from '../clients';
 import { CHAIN_ID, LOCAL_GAME, deployment } from '../config';
 import { resolveCast, type CastOutcome, type ChainCatalog } from '../game/chainOutcome';
+import { CAST_OF_SELECTOR, decodePlayerView, isRelease004, reelWindowOf, type PlayerView } from '../game/release';
 import { LOCATIONS, QUALITIES, SPECIALS, SPECIES, TUNING, BLEND_PRIZE } from '../game/content';
 import { achievements } from '../game/progress';
 import { freshSave } from '../game/save';
@@ -48,9 +49,11 @@ export interface World {
   blend: { balance: number; allowance: bigint; pearlPerBlend: number; paused: boolean } | null;
   /** The bottle as the contracts have it now: the prize, who may hook it, and how many are left to find. */
   bottle: { amount: number; chancePpm: number; minLevel: number; maxWins: number; dailyMax: number; today: number; left: number } | null;
+  /** The owner has stopped new casts for a while (before a change of rules or of the game's code). Reeling in still works. */
+  castingPaused: boolean;
 }
 
-export const world: World = { cast: null, rolls: { blendWins: 0, xp: 0n, specialsFound: 0, dry: [] }, week: 0, standings: [], history: [], loaded: false, blend: null, bottle: null };
+export const world: World = { cast: null, rolls: { blendWins: 0, xp: 0n, specialsFound: 0, dry: [] }, week: 0, standings: [], history: [], loaded: false, blend: null, bottle: null, castingPaused: false };
 
 // ------------------------------------------------------------------ client-side preferences (not game state)
 
@@ -96,12 +99,29 @@ function recalledLocation(): number {
 
 // ------------------------------------------------------------------ reads
 
+/**
+ * Whether the game is release 004 or later (game/release.ts). An upgrade goes one way, so a yes is kept for the
+ * life of the page; a no is asked again, which is how an open page notices the upgrade.
+ */
+let release004 = false;
+async function gameIsRelease004(): Promise<boolean> {
+  if (!release004) release004 = isRelease004((await publicClient.call({ to: game.address, data: `${CAST_OF_SELECTOR}${pad(zero).slice(2)}` })).data);
+  return release004;
+}
+
+/** The lens's view of a player, read in the shape of the release the chain runs. */
+async function readPlayerView(who: Address): Promise<PlayerView> {
+  const [is004, answer] = await Promise.all([gameIsRelease004(), publicClient.call({ to: lens.address, data: encodeFunctionData({ abi: gameLensAbi, functionName: 'playerView', args: [who] }) })]);
+  if (!answer.data) throw new Error('the lens answered with nothing');
+  return decodePlayerView(answer.data, is004);
+}
+
 /** Loads the connected player's state from the chain as a Save. Returns null when no wallet is connected. */
 export async function loadChainSave(): Promise<Save | null> {
   const me = state.wallet?.address;
   if (!me) return null;
   const [v, keep, blend, bottle] = await Promise.all([
-    publicClient.readContract({ ...lens, functionName: 'playerView', args: [me] }),
+    readPlayerView(me),
     publicClient.readContract({ ...lens, functionName: 'keepnet', args: [me] }),
     loadBlend(me),
     loadBottle(),
@@ -200,6 +220,7 @@ export async function loadChainSave(): Promise<Save | null> {
   world.cast = v.cast.targetBlock === 0n ? null : { targetBlock: v.cast.targetBlock, nonce: v.cast.nonce, locationId: v.cast.locationId, rod: v.cast.rod, lure: v.cast.lure, special: v.cast.special };
   world.rolls = { blendWins: p.blendWins, xp: p.xp, specialsFound: p.specialsFound, dry: [...v.dry] };
   world.week = week;
+  world.castingPaused = v.castingPaused;
   world.loaded = true;
   inventoryOf = me.toLowerCase();
   return s;
@@ -328,8 +349,57 @@ function chainCatalog(): Promise<ChainCatalog> {
   return catalogPromise;
 }
 
-/** The contract can read a block hash only for the 256 most recent blocks. */
+/** The EVM itself serves the hashes of the 256 most recent blocks. */
 const BLOCKHASH_WINDOW = 256n;
+/**
+ * EIP-2935: the chain's own record of its last 8,191 block hashes, at the same address on every chain that has it.
+ * The game asks it once the EVM's answer is gone (FishingGame._hashOf), which is what gives a player more than two
+ * hours to reel a cast in on Fluent instead of a few minutes.
+ */
+const BLOCK_HISTORY = '0x0000F90827F1C53a10cb7A02335B175320002935' as const;
+/** The settlement lands in a later block than the one this page saw, so a hash is called readable with a margin. */
+const WINDOW_MARGIN = 2n;
+
+/** The history contract's answer for a block: its hash, or null when it has none (too old, or no such contract). */
+async function historyHash(block: bigint): Promise<Hex | null> {
+  try {
+    const { data } = await publicClient.call({ to: BLOCK_HISTORY, data: pad(toHex(block)) });
+    return data && data.length === 66 && !/^0x0+$/.test(data) ? data : null;
+  } catch {
+    return null; // it reverts for a block outside its window
+  }
+}
+
+let reelWindowPromise: Promise<bigint> | null = null;
+/**
+ * How many blocks after its randomness block a cast can still be reeled in here: 8,191 when the game asks the
+ * chain's history (release 004 on) and the chain has one, 256 otherwise.
+ */
+function reelWindow(head: bigint): Promise<bigint> {
+  reelWindowPromise ??= (async () => {
+    // a block the EVM has already forgotten, where there is one; the history must answer for it
+    const probe = head > BLOCKHASH_WINDOW + 50n ? head - BLOCKHASH_WINDOW - 50n : head > 1n ? head - 1n : 0n;
+    const [is004, hash] = await Promise.all([gameIsRelease004(), historyHash(probe)]);
+    const window = reelWindowOf(is004, hash !== null);
+    // the short answer is not kept: the upgrade to release 004 lengthens it under an open page
+    if (window === BLOCKHASH_WINDOW) reelWindowPromise = null;
+    return window;
+  })().catch(() => {
+    reelWindowPromise = null;
+    return BLOCKHASH_WINDOW;
+  });
+  return reelWindowPromise;
+}
+
+/** The hash the contract will read for `target` when a reel sent now is mined, or null when it will find none. */
+async function readableHash(target: bigint, head: bigint): Promise<Hex | null> {
+  const age = head - target;
+  if (age < BLOCKHASH_WINDOW - WINDOW_MARGIN) return (await publicClient.getBlock({ blockNumber: target })).hash;
+  // past the EVM's own reach only a game that asks the history finds a hash
+  if (age >= (await reelWindow(head)) - WINDOW_MARGIN) return null;
+  // asked of the history itself, not of the node's block index: the contract will read exactly this
+  return historyHash(target);
+}
 
 /**
  * What the player's pending cast will be when it is settled, or null if its block is not there yet.
@@ -342,18 +412,16 @@ export async function previewCast(): Promise<CastOutcome | null> {
   if (!me || !c) return null;
   const head = await publicClient.getBlockNumber({ cacheTime: 0 });
   if (head <= c.targetBlock) return null;
-  // the settlement lands in a later block still, so leave a margin before calling the hash readable
-  const expired = head - c.targetBlock >= BLOCKHASH_WINDOW - 2n;
-  const [catalog, block, lo, poolOpen, bottleAmount] = await Promise.all([
+  const [catalog, blockHash, lo, poolOpen, bottleAmount] = await Promise.all([
     chainCatalog(),
-    expired ? Promise.resolve(null) : publicClient.getBlock({ blockNumber: c.targetBlock }),
+    readableHash(c.targetBlock, head),
     publicClient.readContract({ ...game, functionName: 'loadout', args: [BigInt(c.rod), BigInt(c.lure), BigInt(c.special), BigInt(c.locationId)] }),
     // asked now, as the settlement will ask: the player's XP cannot change while a cast is out, the pool can
     bottles ? publicClient.readContract({ ...bottles, functionName: 'open', args: [world.rolls.xp] }) : Promise.resolve(false),
     bottles ? publicClient.readContract({ ...bottles, functionName: 'amount' }) : Promise.resolve(0n),
   ]);
   return resolveCast(catalog, {
-    blockHash: block?.hash ?? null,
+    blockHash,
     player: me,
     game: game.address,
     nonce: c.nonce,
@@ -370,7 +438,7 @@ export async function previewCast(): Promise<CastOutcome | null> {
 export async function blocksUntilExpiry(): Promise<number> {
   if (!world.cast) return 0;
   const head = await publicClient.getBlockNumber({ cacheTime: 0 });
-  return Number(world.cast.targetBlock + BLOCKHASH_WINDOW - head);
+  return Number(world.cast.targetBlock + (await reelWindow(head)) - head);
 }
 
 // ------------------------------------------------------------------ writes

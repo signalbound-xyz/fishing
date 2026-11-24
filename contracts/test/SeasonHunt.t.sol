@@ -147,6 +147,52 @@ abstract contract HuntBase is TournamentsBase {
     }
 }
 
+/// @notice Writes real attempts with their randomness and what the contract said of each to a JSON file. The
+///         operator's keeper decides off the chain which attempts are worth a transaction (web/src/game/hunt.ts,
+///         `huntHit`); its tests replay these vectors, so that arithmetic cannot drift from `SeasonHunt._roll`.
+///         Regenerate after changing `_roll`: WRITE_VECTORS=true forge test --match-contract HuntVectorsTest
+contract HuntVectorsTest is HuntBase {
+    string internal constant PATH = "../web/src/game/fixtures/hunt.json";
+
+    function test_writeHuntVectors() public {
+        if (!vm.envOr("WRITE_VECTORS", false)) return;
+        uint256 id = _open();
+        address carol = makeAddr("carol");
+        address[3] memory who = [alice, bob, carol];
+        pearl.mint(alice, 100_000 ether);
+        vm.startPrank(alice);
+        game.buyRod(1); // another chance than the starter rod's
+        game.buyLure(1);
+        vm.stopPrank();
+
+        string memory out = "[";
+        uint256 hits;
+        uint256 n = 45;
+        for (uint256 i; i < n; i++) {
+            address player = who[i % 3];
+            uint64 seq = _cast(id, player, 0);
+            // a hash of its randomness block under which the contract says what `want` says
+            bool want = i % 3 == 0 || i % 7 == 0;
+            _decide(id, seq, want);
+            SeasonHunt.Attempt memory a = hunt.attemptOf(id, seq);
+            bytes32 rnd = blockhash(beacon.targetBlock(a.blockNumber));
+            bool hit = hunt.outcome(id, seq, "");
+            assertEq(hit, want);
+            if (hit) hits++;
+            out = string.concat(
+                out,
+                i == 0 ? "" : ",",
+                '{"randomness":"', vm.toString(rnd), '","chainId":', vm.toString(block.chainid), ',"hunt":"', vm.toString(address(hunt)),
+                '","season":', vm.toString(id), ',"seq":', vm.toString(seq), ',"player":"', vm.toString(a.player),
+                '","chance":', vm.toString(hunt.chance(id, a.rod, a.lure, a.water)), ',"hit":', hit ? "true" : "false", "}"
+            );
+        }
+        assertGt(hits, 10);
+        assertLt(hits, n - 10);
+        vm.writeFile(PATH, string.concat(out, "]\n"));
+    }
+}
+
 contract SeasonHuntTest is HuntBase {
     // ------------------------------------------------------------------ creating a season
 

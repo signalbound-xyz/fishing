@@ -246,7 +246,7 @@ see the balance report for why, and for the base chance by expected crowd.
 | Front-running a settlement | Gains nothing: the prize goes to the attempt's caster, whoever sends the proof |
 | Front-running a cast | With drand nobody knows which cast will hit, so position is worth nothing in expectation |
 | Selective settlement | A player cannot hide another player's hit; anyone can settle it. Holding back one's own hit only risks losing it |
-| Delaying one's own hit | A hit can sit unrecorded for up to `settleWindow`, during which others keep casting attempts that will lose to it. They still land their ordinary catches, so they lose only the hope. A keeper that settles every hit as it appears removes this; none is run yet |
+| Delaying one's own hit | A hit can sit unrecorded for up to `settleWindow`, during which others keep casting attempts that will lose to it. They still land their ordinary catches, so they lose only the hope. A keeper that settles every hit as it appears removes this; it is built ([web/KEEPER.md](web/KEEPER.md)) and not yet run |
 | Censoring a settlement | The sequencer could ignore a `settle` for the whole window. Same trust as every transaction on the chain; a longer window makes it harder to do unnoticed |
 | Replay | The draw is bound to chain, contract, season, attempt number and player; the proof to one drand round by the cast's own timestamp |
 | Draining the escrow | One exit per prize, checked by unit, reentrancy and invariant tests (`balance == escrowed == sum of prizes owed`) |
@@ -346,7 +346,7 @@ report, and change the prize to what the sponsor actually holds.
 
 ## Before a public launch
 
-A hunt with a prize of real value needs all of these; none is done.
+A hunt with a prize of real value needs all of these; none is done, and one (the keeper) is built.
 
 1. **Sybil resistance.** Free entry with free tackle cannot carry a real prize. Pick at least one: an entry fee
    that funds the prize (the tournaments' model, so a farm only wins what others paid), a meaningful `minLevel`
@@ -355,7 +355,9 @@ A hunt with a prize of real value needs all of these; none is done.
 3. **The clock.** Measure the network's block-timestamp lag over time and under load, set `margin` from it, and
    decide on mixing in a later block hash.
 4. **A keeper** that settles every hit the moment its round exists, so that no hit depends on its owner's browser
-   and nobody can sit on one.
+   and nobody can sit on one. **Built, not running:** [web/KEEPER.md](web/KEEPER.md) has what it does, what its
+   key can do (pay gas, nothing else) and how to switch it on. It still needs a key with gas, a schedule and
+   monitoring, and a rehearsal against the live network with drand proofs.
 5. **Ownership.** The game, the proxies and the hunt behind a multisig with a delay.
 6. **A drand outage plan**: a settle window comfortably longer than any outage drand has had, and monitoring.
 7. **The trophy's bookkeeping** (dex entry, XP, `Caught` event), if it should count as a catch; it needs room in

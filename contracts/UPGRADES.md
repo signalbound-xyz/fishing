@@ -107,6 +107,9 @@ Then the proxies are pointed at the current source and the tests compare:
   prize) on the released code and on the new code must emit the same events and leave the same state. When a release
   changes a rule on purpose, this is the test that says so, and it is updated with the reason.
 
+The comparison reads state the same way on every release (`test/GameState.sol`: the getters every release has, and
+raw storage for the rest), because from release 004 on the lens of one release cannot read the game of another.
+
 `test/UpgradeFork.t.sol` is the rehearsal on the real thing: a fork of a live network, upgraded by the real
 `script/Upgrade.s.sol` with all its checks, as the proxy admin's owner. Every player the chain can name (holders and
 catchers of fish, weekly boards, tournament leaders, the owner), every fish and every tournament must read the same
@@ -127,7 +130,14 @@ anything it reverts unless:
   is built with them;
 - the new implementation's bytecode is this build (`out/`), and it is within the 24,576-byte limit;
 - the sender owns the proxy's `ProxyAdmin`;
+- the water is still, when the live code can say so (release 004 and later): casting is paused and
+  `castsInWater` is zero (see "Still water");
 - after the upgrade the proxy runs the new code, and its owner, config and counters read as before.
+
+With `TARGET=game` it also ships the lens. `GameLens` reads the game's storage by slot, so it belongs to one build
+of the game: the script deploys this build's lens (unless the one in `deployments/` already is this build), calls
+its `catalog()` and `playerView(owner)` against the upgraded game, and after a broadcast writes the new address
+into `deployments/<chainId>.json`.
 
 It prints the proxy, the old and new implementation, the code size and hash, and what to do next.
 
@@ -140,10 +150,25 @@ It prints the proxy, the old and new implementation, the code size and hash, and
    cd contracts && ./preflight.sh fluent_testnet
    ```
 
-3. **Mind what is in flight.** A cast is settled with the rules in force when it is reeled, and it lives at most 256
-   blocks; a tournament reads the game's catalog for as long as it runs. Until the contracts enforce it (planned,
-   see "Remaining risks"), do not change the code of `_reel`, the config, pools or species while it matters: upgrade
-   when no rule changes, or settle open casts first (`reelFor` is open to anyone) and wait for running tournaments.
+3. **Still the water** (from release 004 on; see "Still water"). Pause casting, reel in every cast, check:
+
+   ```bash
+   forge script script/Water.s.sol --sig "pause()" --rpc-url fluent_testnet --broadcast --private-key <owner key>
+   ```
+
+   ```bash
+   cd ../web && pnpm keeper --drain
+   ```
+
+   ```bash
+   forge script script/Water.s.sol --sig "status()" --rpc-url fluent_testnet
+   ```
+
+   It must say `still`. Release 003, the code on Fluent Testnet now, has neither the pause nor the count, so for
+   the upgrade *to* 004 this step is `pnpm keeper --drain` alone, at a quiet moment: a cast made between the
+   drain and the upgrade is landed by the new code under the same rules (004 changes none), and it is not in the
+   new count ("Casts from before the count"). A tournament reads the game's catalog for as long as it runs: wait
+   for running tournaments before a change of pools or species.
 4. **Upgrade.** One contract per run.
 
    ```bash
@@ -163,10 +188,20 @@ It prints the proxy, the old and new implementation, the code size and hash, and
    ./release.sh verify fluent_testnet --source
    ```
 
-6. **Balance, if the release needs it**, as its own step: `forge script script/Economy.s.sol …`.
-7. **Client.** If the ABI changed: deploy a new `GameLens`, put its address in `deployments/`, and publish the web
-   client together with the upgrade (`pnpm build` syncs the ABI). The client warns when its catalog differs from
-   the chain's.
+6. **Balance, if the release needs it**, as its own step, while the water is still: `forge script
+   script/Economy.s.sol …` (it refuses to run with a cast in the water).
+7. **Resume casting**: `forge script script/Water.s.sol --sig "resume()" …`.
+8. **Client, at once.** The script has put the new lens into `deployments/`. A page built before the upgrade
+   reads the old lens, which cannot read the new game, so until the new client is out the live page shows errors.
+   (The client itself reads either release, `web/src/game/release.ts`, so it can be published ahead of an
+   upgrade; it is the lens's address that has to follow.)
+
+   ```bash
+   cd ../web && pnpm sync && pnpm build:api && pnpm test
+   ```
+
+   Commit `deployments/`, `web/src/generated`, `web/api` and `contracts/releases` together and publish. Then
+   `pnpm live:read` asks the network whether the deployed lens answers in the shape the client decodes.
 
 ### Rollback
 
@@ -320,6 +355,111 @@ closed. Deploying the hunt, attaching it, announcing and funding a season are se
 SEASON_HUNT.md, "Deployment", has them in order. `SeasonHunt` and the beacons have no release snapshot;
 `preflight.sh` lists their sizes with the others.
 
+## Release 004: still water, a longer window, views in the lens
+
+**Built and rehearsed; not deployed.** Three changes to `FishingGame`, and the room for them.
+
+```solidity
+uint64 public castsInWater;      // appended after seasonHunt, in its slot
+bool public castingPaused;       // the same slot
+struct Cast { …; bool counted; } // one field appended; the struct still fits its slot
+function setCastingPaused(bool paused) external onlyOwner;
+function extsload(uint256 slot, uint256 n) external view returns (bytes32[] memory);
+error CastingPaused();
+error WaterNotStill();
+```
+
+`check-layout.sh`: ok against release 003, 2 state variables and 1 struct field appended. `validate-upgrade.sh`
+passes.
+
+### Still water
+
+A cast is decided by the rules it was made under. Until this release that was a rule of the procedure; now the
+game enforces it for its own rules:
+
+- `castsInWater` counts the casts that are made and not yet reeled in; `_cast` adds one, `_reel` takes one off.
+- `setConfig`, `updateLocation` and `setHidden`, the three setters that change what a cast in the water would
+  land, revert `WaterNotStill` while the count is not zero. Setters that only append (`addRod`, `addLure`,
+  `addLocation`, `addSpecial`, `addAchievement`), prices and the two hooks' addresses are not guarded: nothing a
+  cast in the water reads changes with them.
+- `setCastingPaused(true)` stops new casts (`CastingPaused`) and nothing else: reeling in, selling, the shop and
+  energy go on. With casting paused the count can only fall, and `reelFor` is open to anyone, so the operator can
+  always bring it to zero: `pnpm keeper --drain` in `web/` (`web/KEEPER.md`).
+
+Storing a copy of the rules in every cast was the alternative. It needs several storage slots per cast and code
+for which there is no room; the count costs one write to a slot the cast already reads.
+
+**What it does not reach**, and stays a procedure (`script/Water.s.sol`, the checks in `script/Upgrade.s.sol` and
+`script/Economy.s.sol`):
+
+- the species table (`FishNFT.updateSpecies`) and the bottle rules (`BottlePool`): other contracts, which do not
+  ask the game;
+- the code behind the proxy: an upgrade changes `_reel` for every cast in the water, and the proxy admin does not
+  ask the game either. The upgrade script does, and refuses;
+- tournaments: their casts are their own (still a 256-block window) and read the game's catalog live.
+
+**Casts from before the count.** A cast made on release 003 has `counted == false` after the upgrade. Reeling it
+in does not touch the count (no underflow), and it does not hold the rules. Such a cast lives for 256 blocks of the
+old window at most and 8,191 of the new one, so for that long after the upgrade to 004 the guarantee is the old
+one: do not change rules then. `test_aCastMadeBeforeTheCountIsNotCounted`.
+
+Gas: one more storage write per cast and per reel, to a slot that already holds the hunt's address, about 5,000
+gas each by the EVM's price list (not measured apart from the rest).
+
+### 8,191 blocks to land a cast
+
+`blockhash` answers for the last 256 blocks. EIP-2935 keeps the last 8,191 block hashes in a system contract at
+`0x0000F90827F1C53a10cb7A02335B175320002935`. `_reel` now asks `blockhash` first and, when that is zero, the
+history contract; only a 32-byte answer of a successful call counts, anything else is "expired", as before.
+
+- **On Fluent Testnet** the contract at that address is Fluent's own system contract (rWasm code, not the EIP's
+  EVM bytecode). Asked from outside and from a contract's own `staticcall`, it answers with the real hash for
+  every block from 1 to 8,191 under the head and reverts outside that range and for future blocks. `pnpm
+  live:read` in `web/` repeats the check: 200 consecutive hashes in five ranges of the window, the boundaries, and
+  a contract's own call.
+- **Forge cannot run that code**, so the fork tests cannot exercise the long window. `test/Water.t.sol` places the
+  EIP's canonical bytecode at the address and tests the game against it (inside 256 blocks, between 256 and 8,191,
+  past it, an empty history, a history that reverts or answers with the wrong size).
+- **The same seed, for longer.** The hash of a block does not change; a cast landed at block 300 or 8,000 lands
+  the same fish.
+- **What it assumes:** that the history contract has every block's hash, not most of them. A skipped slot would
+  hold the hash of a block 8,191 blocks earlier, and the game would take it for the seed. The EIP and the live
+  check above say it does not happen; the game cannot check it.
+- A network without the contract keeps the 256-block window with no change of code. The client and the keeper
+  ask the chain which it is: the long window needs both a game that asks the history (release 004 on, told by
+  the length of `castOf`'s answer) and a history that answers (`web/src/game/release.ts`).
+
+What a player who already knows the draw can still change before landing (the pity counter, the bottle's
+conditions; ARCHITECTURE.md, "Randomness") can now be changed for 8,191 blocks instead of 256. With the bottle
+switched off, as it is, nothing there is worth anything; it is one more thing to settle before the bottle pays.
+
+### Views in the lens
+
+This is option A of "What 1,236 bytes buy", taken in part: five views that only the lens and the tests used are
+gone from the game (`specialInfo`, `achievement`, `weekEntries`, and the public getters `bestCatch` and `bestAt`),
+and one `extsload(slot, n)` returns raw storage words instead. `GameLens` computes the slots (`_specials` 8,
+`_achievements` 9, `bestCatch` 17, `bestAt` 18, `_week` 22) and unpacks the structs; it offers the same five reads
+under the same names.
+
+- Storage is public on a chain: `extsload` exposes nothing.
+- The price is the one named under option A: the lens must agree with the layout. `test/GameLens.t.sol` compares
+  every lens read with the compiler's own getters on the same storage, and `test/Upgrade.t.sol` and the fork test
+  compare the new lens with what the released getters answered before the upgrade, for every player, special
+  fish, achievement and weekly entry.
+- **The released lens stops working at the upgrade**, and the new lens does not work before it. The script ships
+  the lens with the game; the client follows at once (procedure, step 8).
+- `castOf` returns one more word. The released `SeasonHunt` decodes the six it knows and ignores the seventh; the
+  fork test plays a season on the live hunt after the upgrade. The released `Tournaments` calls none of the
+  removed views.
+- `rodItem`, `lureItem`, `playerOf`, `castOf` and the rest stay: the rest of option A is still there to take
+  (about 1,500 bytes more, by the per-view measurements made for this release).
+
+### Procedure
+
+The procedure above. For the first upgrade to 004, step 3 is the drain alone (release 003 cannot pause) and step 7
+is not needed (the new game starts with casting open). Step 8 is: the live page cannot read the game until the
+new client is out.
+
 ## Contract size
 
 **Fluent enforces EIP-170.** Checked on Fluent Testnet by simulating a contract creation (`eth_estimateGas`, no
@@ -331,14 +471,17 @@ transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `Cre
 | after the optimizations below (never deployed by itself) | 23,340 | 1,236 |
 | release 002, on Fluent Testnet on 24 November 2026: the above plus the daily reward hook | 23,688 | 888 |
 | release 003, on Fluent Testnet now: the above plus the Season Hunt hook | 24,293 | 283 |
+| release 004, not deployed: still water and the long window (565 bytes), five views moved to the lens | 23,855 | 721 |
 
 `DailyRewards`, the plain contract that goes with the daily reward hook, is 3,802 bytes; `SeasonHunt` is 15,455 and
 `DrandBeacon` 4,158. See "The daily reward" and "Season Hunt" above.
 
-**283 bytes is all that is left.** The Season Hunt hook was first written to land the trophy through the game's own
+**283 bytes is all that is left on the chain, 721 in the source.** `GameLens`, a plain contract, is 13,951 bytes
+in release 004. The Season Hunt hook was first written to land the trophy through the game's own
 catch code (dex, XP, the `Caught` event): 2,078 bytes, which did not fit. What is in the source mints the fish and
 nothing else. The next feature that needs code in `FishingGame` needs one of the options under "What 1,236 bytes
-buy" first; paid location unlocks (838 bytes) no longer fit beside the hunt.
+buy" first; paid location unlocks (838 bytes) no longer fit beside the hunt. Release 004 took the first part of
+option A to make room for itself and leaves 721.
 
 ### What was optimized
 
@@ -403,6 +546,8 @@ today. The price: the lens must know the storage layout (slot numbers, packing, 
 wrong data to players without touching their state; the released lens stops working at the upgrade, so a new one
 must ship in the same release; and the tests read through a lens-like helper instead of getters. What makes it
 safe to build: the lens can be tested against the released bytecode, where the getters still exist, field by field.
+**Release 004 takes the first five of these views** ("Views in the lens") with an `extsload(slot, n)` that reads
+consecutive slots; a version taking a list of slots measured 232 bytes, which the gain did not pay for.
 
 **B. Linked library for the setters.** `addRod` … `addAchievement` keep their signatures and owner check on the game
 and call a library that validates and writes through typed storage pointers. Adding content works exactly as today.
@@ -444,7 +589,9 @@ exactly as today. It frees the most, and it is the one to justify carefully befo
    unlocks need point 2 first.)
 2. For 3 KB and more with content management kept on the chain: **A**, keeping `playerOf` and `castOf` (3,672 free)
    or not (4,534 free). It is the only option above 3 KB that adds no delegatecall, no new privilege and no
-   migration. It changes the read interface, so it is a decision to take before it is built.
+   migration. It changes the read interface, so it is a decision to take before it is built. (Begun in release
+   004: five views moved, the tooling for it is in place, about 1,500 bytes more are there to take with `playerOf`
+   and `castOf` kept.)
 3. If more is needed after that, **B** on top (5,630 free), before anything hand-written.
 4. Not now: **D** (most moving parts, gas on every cast) and **E** (only when the player-facing code itself no
    longer fits). **C** stays the fallback if the read interface must not change.
@@ -461,8 +608,14 @@ network with real value needs the owner to be a multisig behind a timelock befor
 
 ## Remaining risks
 
-- **Rules in flight.** A cast in the water and a running tournament read the live config and catalog. Today this is
-  a rule of the procedure (step 3), not something the contracts enforce.
+- **Rules in flight.** On release 003, the code on the chain, a cast in the water reads the live config and
+  catalog, and keeping rules steady is a rule of the procedure. Release 004 enforces it for the game's own rules
+  and leaves three things to the procedure: the species table and the bottle rules (other contracts), the code
+  behind the proxy, and casts made before the upgrade to 004 ("Still water"). A running tournament reads the
+  game's catalog live in every release.
+- **The pause is the owner's.** `setCastingPaused` stops every new cast with one transaction of the one key
+  below. It cannot take or hold anything a player has: reeling in and selling go on.
+- **The long window trusts the chain's block-hash history** to have every hash ("8,191 blocks to land a cast").
 - **Fish metadata.** `FishNFT.updateSpecies` rewrites the name, rarity and weight range of every fish of a species,
   and a raised minimum weight makes `tokenURI` revert for lighter fish. Do not call it; add a new species instead.
 - **One key** owns everything (see "Secrets").
@@ -478,5 +631,7 @@ network with real value needs the owner to be a multisig behind a timelock befor
   tournaments. A player who cast and never landed anything is not found; their state is covered by the slot
   comparison of the local test only in kind, not individually.
 - **`GameLens` and the client** are bound to the ABI: a struct returned by a view may only gain fields at its end,
-  and a release that changes the ABI needs a new lens and a client release.
+  and a release that changes the ABI needs a new lens and a client release. From release 004 the lens is also
+  bound to the game's storage layout: a wrong slot shows players wrong numbers without touching their state, and
+  between the upgrade and the client's release the live page cannot read the game.
 - **The two layout checks agree on storage only.** Neither sees a field whose meaning changed while its type stayed.

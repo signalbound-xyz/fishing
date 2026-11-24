@@ -200,17 +200,16 @@ contract UpgradeFromReleaseTest is TournamentsBase {
         return [alice, bob, carol, dave, erin, frank];
     }
 
-    /// @dev Everything the game knows about every player, as the client reads it (GameLens), week by week.
+    /// @dev Everything the game knows about every player, week by week, and its catalog, read the same way from the
+    ///      released code and from this source (test/GameState.sol).
     function _gameState() internal view returns (bytes32 h) {
         address[6] memory who = _players();
         uint256 lastWeek = game.currentWeek();
         for (uint256 i; i < who.length; i++) {
-            h = keccak256(abi.encode(h, lens.playerView(who[i]), pearl.balanceOf(who[i])));
-            for (uint256 w = firstWeek; w <= lastWeek; w++) {
-                h = keccak256(abi.encode(h, game.weekEntries(w, who[i]), game.weekTotal(w, who[i])));
-            }
+            h = keccak256(abi.encode(h, _playerState(game, who[i]), pearl.balanceOf(who[i])));
+            for (uint256 w = firstWeek; w <= lastWeek; w++) h = keccak256(abi.encode(h, _weekState(game, w, who[i])));
         }
-        h = keccak256(abi.encode(h, lens.catalog(), game.totalCasts(), game.owner(), pearl.totalSupply()));
+        h = keccak256(abi.encode(h, _catalogState(game), game.totalCasts(), game.owner(), pearl.totalSupply()));
     }
 
     /// @dev Every fish that exists: who holds it, what it is, its metadata and what the game would pay for it.
@@ -268,7 +267,7 @@ contract UpgradeFromReleaseTest is TournamentsBase {
         assertEq(pearl.balanceOf(carol), 777 * E, "carol's PEARL");
         assertEq(fish.ownerOf(aliceListed), address(market), "the listed fish");
         assertGt(game.currentWeek(), firstWeek, "catches in more than one week");
-        assertGt(game.castOf(erin).targetBlock, 0, "a cast in the water");
+        assertGt(_castOf(erin).targetBlock, 0, "a cast in the water");
         assertGt(cup.entryOf(running, bob).targetBlock, 0, "a tournament fish on the line");
         assertTrue(cup.isOver(finished), "the first tournament is over");
         assertEq(game.playerOf(frank).casts, 0, "frank never played");
@@ -277,7 +276,7 @@ contract UpgradeFromReleaseTest is TournamentsBase {
     function test_upgradeKeepsEveryPlayersStateFishAndTournaments() public {
         FishingGame.Player memory a = game.playerOf(alice);
         FishingGame.Player memory b = game.playerOf(bob);
-        FishingGame.Cast memory pending = game.castOf(erin);
+        FishingGame.Cast memory pending = _castOf(erin);
         uint256 alicePearl = pearl.balanceOf(alice);
         uint16 aliceRod = game.rodDurability(alice, 1);
         uint32 aliceLure = game.lureCasts(alice, 0);
@@ -307,8 +306,8 @@ contract UpgradeFromReleaseTest is TournamentsBase {
         assertEq(b2.claimed, b.claimed, "achievements claimed");
         assertEq(fish.ownerOf(aliceListed), address(market), "fish ownership");
         assertEq(fish.tokenURI(aliceListed), uri, "fish metadata");
-        assertEq(game.castOf(erin).targetBlock, pending.targetBlock, "the cast in the water");
-        assertEq(game.castOf(erin).nonce, pending.nonce);
+        assertEq(_castOf(erin).targetBlock, pending.targetBlock, "the cast in the water");
+        assertEq(_castOf(erin).nonce, pending.nonce);
         (address[] memory top2, uint32[] memory totals2) = cup.standings(finished);
         assertEq(top2, top, "tournament standings");
         assertEq(keccak256(abi.encode(totals2)), keccak256(abi.encode(totals)), "tournament totals");
@@ -352,7 +351,7 @@ contract UpgradeFromReleaseTest is TournamentsBase {
     ///      repairing, an achievement, a prize. Returns every event it emitted and the state it left.
     function _playOn() internal returns (bytes32 events, bytes32 state) {
         vm.recordLogs();
-        uint64 target = game.castOf(erin).targetBlock;
+        uint64 target = _castOf(erin).targetBlock;
         uint64 fight = cup.entryOf(running, bob).targetBlock;
         vm.roll((target > fight ? target : fight) + 1);
         vm.setBlockhash(target, keccak256("erin"));
@@ -439,16 +438,102 @@ contract UpgradeFromReleaseTest is TournamentsBase {
     }
 
     function test_aCastInTheWaterIsLandedByTheNewCode() public {
-        uint64 target = game.castOf(erin).targetBlock;
+        uint64 target = _castOf(erin).targetBlock;
         _upgrade();
         vm.roll(target + 1);
         vm.setBlockhash(target, keccak256(abi.encode("a bite", uint256(3))));
         uint256 next = fish.nextId();
         vm.prank(erin);
         game.reel();
-        assertEq(game.castOf(erin).targetBlock, 0, "the cast is settled");
+        assertEq(_castOf(erin).targetBlock, 0, "the cast is settled");
         if (fish.nextId() > next) assertEq(fish.ownerOf(next), erin);
         assertEq(game.playerOf(erin).casts, 1);
+    }
+
+    /// @dev The game counts its casts in the water since release 004. A cast made on earlier code is not in the
+    ///      count: reeling it in must not take one off, and it does not hold the rules. Every later cast is counted.
+    function test_aCastMadeBeforeTheCountIsNotCounted() public {
+        uint64 target = _castOf(erin).targetBlock;
+        assertGt(target, 0);
+        _upgrade();
+        assertEq(game.castsInWater(), 0, "a cast of the old code is counted");
+        assertFalse(_castOf(erin).counted);
+        assertFalse(game.castingPaused(), "the upgrade paused the game");
+
+        vm.roll(target + 1);
+        game.reelFor(erin);
+        assertEq(game.castsInWater(), 0, "reeling in an uncounted cast moved the count");
+
+        vm.prank(erin);
+        game.cast(0);
+        assertEq(game.castsInWater(), 1);
+        assertTrue(_castOf(erin).counted);
+        vm.roll(_castOf(erin).targetBlock + 1);
+        game.reelFor(erin);
+        assertEq(game.castsInWater(), 0);
+    }
+
+    /// @dev Release 004 took five getters out of the game; the lens reads the same storage by slot instead. Here
+    ///      the released code's own getters are asked first, on the world played on that code, and the new lens
+    ///      must answer the same on the new code, for every special fish, achievement, player, water and week.
+    ///      Once the latest release has no such getters this has nothing to compare with and says so; the lens
+    ///      is then checked in test/GameLens.t.sol alone.
+    function test_theNewLensReadsWhatTheReleasedGettersAnswered() public {
+        (bool has,) = address(game).staticcall(abi.encodeWithSignature("specialInfo(uint256)", 0));
+        if (!has) {
+            vm.skip(true, "the released game has no getters to compare the lens with");
+        }
+        address[6] memory who = _players();
+        uint256 lastWeek = game.currentWeek();
+        uint256 nSpecials = game.specialCount();
+        uint256 nAchievements = game.achievementCount();
+        uint256 nLocations = game.locationCount();
+        bytes32 before;
+        for (uint256 i; i < nSpecials; i++) before = keccak256(abi.encode(before, _ask("specialInfo(uint256)", abi.encode(i))));
+        for (uint256 i; i < nAchievements; i++) before = keccak256(abi.encode(before, _ask("achievement(uint256)", abi.encode(i))));
+        for (uint256 k; k < who.length; k++) {
+            before = keccak256(abi.encode(before, _ask("bestCatch(address)", abi.encode(who[k]))));
+            for (uint256 l; l < nLocations; l++) {
+                before = keccak256(abi.encode(before, _ask("bestAt(address,uint256)", abi.encode(who[k], l))));
+            }
+            for (uint256 w = firstWeek; w <= lastWeek; w++) {
+                before = keccak256(abi.encode(before, _ask("weekEntries(uint256,address)", abi.encode(w, who[k]))));
+            }
+        }
+
+        _upgrade();
+        GameLens next = new GameLens(game);
+
+        bytes32 after_;
+        FishingGame.Special[] memory specials = next.specials();
+        FishingGame.Achievement[] memory achievements = next.achievements();
+        assertEq(specials.length, nSpecials);
+        assertEq(achievements.length, nAchievements);
+        for (uint256 i; i < nSpecials; i++) after_ = keccak256(abi.encode(after_, abi.encode(specials[i])));
+        for (uint256 i; i < nAchievements; i++) after_ = keccak256(abi.encode(after_, abi.encode(achievements[i])));
+        uint256 weeksWithCatches;
+        for (uint256 k; k < who.length; k++) {
+            after_ = keccak256(abi.encode(after_, abi.encode(next.bestCatch(who[k]))));
+            for (uint256 l; l < nLocations; l++) after_ = keccak256(abi.encode(after_, abi.encode(next.bestAt(who[k], l))));
+            for (uint256 w = firstWeek; w <= lastWeek; w++) {
+                FishingGame.WeekEntry[] memory entries = next.weekEntries(w, who[k]);
+                if (entries.length != 0) weeksWithCatches++;
+                after_ = keccak256(abi.encode(after_, abi.encode(entries)));
+            }
+        }
+        assertEq(after_, before, "the new lens reads something else than the released getters answered");
+        assertGt(weeksWithCatches, 2, "nothing was compared");
+        assertGt(next.bestCatch(bob).weight, 0);
+        // and the views a client asks for work on the upgraded game
+        next.catalog();
+        for (uint256 k; k < who.length; k++) next.playerView(who[k]);
+    }
+
+    /// @dev A getter of the released code, by signature: the current source no longer declares it.
+    function _ask(string memory signature, bytes memory args) internal view returns (bytes memory out) {
+        bool ok;
+        (ok, out) = address(game).staticcall(bytes.concat(bytes4(keccak256(bytes(signature))), args));
+        require(ok, signature);
     }
 
     /// @dev Release 001 had no way to add energy; since release 002 there is one, closed until the owner names the
@@ -513,7 +598,7 @@ contract UpgradeFromReleaseTest is TournamentsBase {
     }
 
     function _one(address who) internal view returns (bytes32) {
-        return keccak256(abi.encode(lens.playerView(who), pearl.balanceOf(who)));
+        return keccak256(abi.encode(_playerState(game, who), pearl.balanceOf(who)));
     }
 
     /// @dev The season hunt is a contract of its own behind one slot of the game (`seasonHunt`). Release 002 had
@@ -612,7 +697,7 @@ contract UpgradeFromReleaseTest is TournamentsBase {
     /// @dev A player as the game holds them, without the clock and the block number a lens view carries.
     function _still(address who) internal view returns (bytes32) {
         return keccak256(
-            abi.encode(game.playerOf(who), game.castOf(who), pearl.balanceOf(who), fish.balanceOf(who), blend.balanceOf(who))
+            abi.encode(game.playerOf(who), _castOf(who), pearl.balanceOf(who), fish.balanceOf(who), blend.balanceOf(who))
         );
     }
 

@@ -19,7 +19,7 @@ export interface ChainCatalog {
 }
 
 export interface CastInput {
-  /** Hash of the cast's target block; null when it is more than 256 blocks old (the contract can no longer read it). */
+  /** Hash of the cast's target block; null when the contract can no longer read it (older than the chain's history: 8,191 blocks, or 256 on a chain without EIP-2935). */
   blockHash: Hex | null;
   player: Address;
   game: Address;
