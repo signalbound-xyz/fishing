@@ -120,11 +120,62 @@ If `contracts/out` is missing, `sync` keeps the already generated files.
 - `VITE_RPC_URL` — node RPC (default: the network's public RPC).
 - `VITE_TELEMETRY` — `off` stops the gameplay telemetry from recording (it is on by default and stays in the browser).
 
+## My Stats (`#/profile`)
+
+The player's fishing career: lifetime numbers, fishing by location, personal records, progress. The header shows
+what is spent at the water (level, PEARL, energy); the lifetime numbers live here, behind the **Stats** link.
+
+Every number has one of three sources, and the page does not mix them:
+
+| What | On the contracts | Local game |
+| --- | --- | --- |
+| Fish caught, casts, catch rate, level and XP, waters unlocked | the player's state in `FishingGame` (`GameLens.playerView`) | the save (`stats`, `xp`, the unlocked locations) |
+| Species discovered, fish caught per rarity (Legendary, Mythic), best weight per species | the encyclopedia in the same state: a count and a best per species | the save (`dex`) |
+| Biggest fish overall and by location | the records in the same state | the save (`records`) |
+| Mastery, collection achievements | computed from the encyclopedia (`game/mastery.ts`, `game/progress.ts`) | the same |
+| Casts, catches, no-bite casts and species **by location** | the game's `Casted`, `Caught` and `Missed` events of the account | counters in the save (`career`), kept since they were added |
+| Daily streak | the daily-challenge reader (`play/daily.ts`), as the Daily tab shows it | the save |
+| Saved trophies | the keepnet as it is now, and this browser's stars | the save |
+
+Nothing is taken from the keepnet for a lifetime number (a fish that was sold or sent away still counts), nothing
+by location is guessed from the encyclopedia (a species lives in more than one water), and the telemetry log plays
+no part.
+
+**The history by location on the contracts** (`game/career.ts`, `play/career.ts`). The state does not keep where a
+fish was caught, the events do. They are read from the game's first block (`startBlock` of the deployment) with
+`eth_getLogs`, filtered by the player's topic, 90,000 blocks a query (the Fluent RPC refuses more than 100,000),
+three queries at a time. The folded counts are cached in localStorage under
+`onchain-fishing:career:<chainId>:<game>:<account>`, with the last block read and its hash, so the history is read
+once per device and afterwards only the blocks since; another account, network or game contract has its own cache.
+The read stops five blocks under the head, and only while the Stats page is open.
+
+What makes the counts more than a hope: `casts` and `catches` in the contract move only together with `Casted` and
+`Caught`, so after every read the sums are held against `playerOf(account)` **at the same block**. They are equal,
+or the page says how many casts and catches no water could be named for. While a first read is on its way the page
+shows its progress and calls nothing complete; a read that fails keeps what it had and resumes there; a cached end
+block whose hash has changed (a reorg) throws the cache away and reads again; if the counters cannot be read the
+counts are marked unchecked. A partial result is never shown as a lifetime total: the lifetime tiles come from the
+state, not from the events.
+
+**No indexer.** A player's whole history on Fluent Testnet is a handful of log queries (about two seconds for the
+first visit at today's chain length, then one small query a visit), so a backend would add a service to run and
+trust for nothing a browser cannot do. If the chain grows past what a first visit can read comfortably, the place
+for it is behind `CareerReader` (four methods), without touching the page.
+
+**Local game.** The save counts casts and catches by location from the day the counters were added
+(`Save.career`, filled by `startCast` and `landFish`). An older save loads with an empty book: what was fished
+before is in the lifetime totals and is shown as "not counted by water", never spread over the waters.
+
+**Not shown, because nothing trustworthy records it:** time played and session length, fish that escaped on the
+contracts (a lost fight is a cast without a catch there), where local catches made before the counters were
+caught, and the past of the keepnet (how many fish were sold or sent away).
+
 ## Gameplay telemetry
 
 Balance work needs to know how people actually play, and a bot cannot say. The game records what happens at the
-water and shows it on the **Play stats** page (`#/stats`, linked in the footer), where the log can be exported as
-JSON or cleared.
+water and shows it on the **Debug telemetry** page (`#/stats`, linked in the footer), where the log can be
+exported as JSON or cleared. It is a debugging log of one browser, not the player's record: the player's own
+numbers are on [My Stats](#my-stats-profile), which reads nothing from it.
 
 - **What**: sessions (start, end, active length), casts (location, cost, tackle, energy left), bites and empty
   hooks, the hook (reaction time, window, missed or clean), every reel fight (landed, line snapped or slack; its
@@ -172,6 +223,7 @@ src/game/              the rules, pure TypeScript, no DOM and no storage
   dailyLog.ts          a player's day read from the game's events: folding, the day's first block, the streak
   dailyReward.ts       the reward for a full day: its rules, the claim window, the signed authorization (EIP-712)
   favorites.ts         saved fish and the Trophy Room as data: the room as a sorted, paged view; the stored preferences; reconciling
+  career.ts            My Stats: the lifetime numbers; counts by location folded from events; the cached log and its check against the contract
   actions.ts           every state change as (save, input) → new save
   save.ts              save shape, versioned migrations
   game.test.ts         unit tests
@@ -184,9 +236,10 @@ src/play/              the local game's shell
   telemetry.ts         gameplay telemetry in the browser: the recorder over localStorage, what the UI reports
   daily.ts             daily challenges in the browser: the chain reader, its cache, what the UI shows
   dailyReward.ts       the reward in the browser: what the contract says, the claim (verifier, then one transaction)
+  career.ts            My Stats in the browser: the event reader, the per-account cache, the one view the page reads
   pending.ts, claims.ts  actions on their way (a claim is sent once, its button waits)
   prefs.ts             on the contracts: where the saved fish (the Trophy Room) are kept (per chain and account)
-  ui/*.ts              pond, keepnet, daily, collection (with mastery), trophies (with trophyRoom), ranks, header, prize (the bottle reveal), stats
+  ui/*.ts              pond, keepnet, daily, collection (with mastery), trophies (with trophyRoom), ranks, header, prize (the bottle reveal), profile (My Stats), stats (debug telemetry)
 src/telemetry/         telemetry format, recorder and summary: pure, no DOM
 src/server/            the daily reward verifier: the check (dailyReward.ts), the chain reads (chain.ts), HTTP (http.ts)
 api/daily-reward.js    the verifier as one file for Vercel, generated by `pnpm build:api` and committed

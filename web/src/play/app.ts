@@ -13,9 +13,11 @@ import { initLocalHeader, tickLocalHeader } from './ui/header';
 import { initKeepnet } from './ui/keepnet';
 import { initPond, pondBusy, tickPond } from './ui/pond';
 import { initRanks, tickRanks } from './ui/ranks';
+import { initProfile } from './ui/profile';
 import { initStats } from './ui/stats';
 import { initTrophies } from './ui/trophies';
 import { catalogMismatches, forgetInventory } from './chain';
+import { wantCareer } from './career';
 import { CHAIN, refresh, refreshStandings } from './ops';
 import { tickDaily } from './daily';
 import { replaceSave } from './state';
@@ -87,6 +89,7 @@ function selectTab(k: Tab): void {
 const tackleEl = h('main', { class: 'tackle hidden' });
 const cupEl = h('main', { class: 'layout cup hidden' });
 const statsEl = h('main', { class: 'playstats hidden' });
+const profileEl = h('main', { class: 'profile hidden' });
 const pondEl = h(
   'main',
   { class: 'layout' },
@@ -99,13 +102,15 @@ app.append(
   pondEl,
   cupEl,
   tackleEl,
+  profileEl,
   statsEl,
   h(
     'footer',
     { class: 'footer' },
     CHAIN ? `${chain.name} (${CHAIN_ID}) · game ${deployment?.game} · every catch is decided and stored onchain` : 'Local game · progress is saved in this browser · no contracts or transactions',
     ' · ',
-    h('a', { text: 'Play stats', title: 'What this browser has recorded about your play. Nothing is sent anywhere.', attrs: { href: '#/stats' } }),
+    // the player's own numbers are on the Stats page (#/profile); this one is the browser's telemetry log, for debugging
+    h('a', { text: 'Debug telemetry', title: 'What this browser has recorded about your play, for debugging. Nothing is sent anywhere. Your fishing career is on the Stats page.', attrs: { href: '#/stats' } }),
   ),
 );
 selectTab(tab);
@@ -114,11 +119,15 @@ function route(): void {
   const tackle = location.hash === '#/tackle';
   const cup = location.hash === '#/cup';
   const stats = location.hash === '#/stats';
-  pondEl.classList.toggle('hidden', tackle || cup || stats);
+  const profile = location.hash === '#/profile';
+  pondEl.classList.toggle('hidden', tackle || cup || stats || profile);
   statsEl.classList.toggle('hidden', !stats);
+  profileEl.classList.toggle('hidden', !profile);
+  // the history by water is read from the chain only while its page is open
+  wantCareer(profile);
   cupEl.classList.toggle('hidden', !cup);
   tackleEl.classList.toggle('hidden', !tackle);
-  document.title = tackle ? 'Tackle · Onchain Fishing' : cup ? 'Cup · Onchain Fishing' : stats ? 'Play stats · Onchain Fishing' : 'Onchain Fishing';
+  document.title = tackle ? 'Tackle · Onchain Fishing' : cup ? 'Cup · Onchain Fishing' : profile ? 'My Stats · Onchain Fishing' : stats ? 'Debug telemetry · Onchain Fishing' : 'Onchain Fishing';
   emit();
 }
 window.addEventListener('hashchange', () => {
@@ -175,6 +184,7 @@ const renders = [
   initTackle(tackleEl, true),
   initCup(cupEl),
   initStats(statsEl),
+  initProfile(profileEl),
 ];
 subscribe(() => renders.forEach((r) => r()));
 route();

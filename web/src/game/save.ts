@@ -37,6 +37,7 @@ export function freshSave(now: number): Save {
     claimed: [],
     stats: { casts: 0, catches: 0, escaped: 0, sold: 0, earned: 0 },
     daily: { day: 0, set: null, catches: [], streak: { day: 0, count: 0 }, rewards: { earned: [], claimed: [] } },
+    career: { since: now, waters: {} },
   };
 }
 
@@ -54,6 +55,12 @@ export interface Loaded {
 }
 
 const isObj = (v: unknown): v is Raw => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+function validCareer(c: unknown): boolean {
+  if (!isObj(c) || typeof c.since !== 'number' || !Number.isFinite(c.since) || !isObj(c.waters)) return false;
+  return Object.entries(c.waters).every(([id, w]) => Number.isInteger(Number(id)) && isObj(w) && isCount(w.casts) && isCount(w.catches) && isCount(w.misses) && isObj(w.species) && Object.values(w.species).every(isCount));
+}
 
 /**
  * Turns stored JSON into a current Save. Never throws. A save that cannot be read or comes from a newer version
@@ -85,10 +92,13 @@ export function loadSave(json: string | null, now: number, migrations = MIGRATIO
   // Fill anything missing from the fresh shape, so a field added without a migration cannot crash the game.
   const base = freshSave(now) as unknown as Raw;
   const merged: Raw = { ...base, ...data, version: current };
-  for (const k of ['equipped', 'records', 'stats', 'refills', 'daily']) {
+  // `career` is one of them: a save from before the counts by water existed gets an empty book that starts now
+  for (const k of ['equipped', 'records', 'stats', 'refills', 'daily', 'career']) {
     merged[k] = { ...(base[k] as Raw), ...(isObj(data[k]) ? (data[k] as Raw) : {}) };
   }
   const save = merged as unknown as Save;
+  // a book that is not one (a hand-edited save) is replaced by an empty one rather than believed or crashed on
+  if (!validCareer(save.career)) save.career = { since: now, waters: {} };
   // The Trophy Room used to be six frames filled by hand (`showcase`). Now it is every saved fish, so what hung in
   // a frame becomes a saved fish (it always was one, whatever a hand-edited save says) and the frames are retired.
   // No version step: a save from either side of the change loads on the other, and nothing else is touched.

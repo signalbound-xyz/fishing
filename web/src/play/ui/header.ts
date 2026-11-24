@@ -1,6 +1,7 @@
 /**
  * Header: level, PEARL, energy and the Fluent Connect sign-in. BLEND is not shown here: it is not spent at the
- * water, and its balance is on the Tackle page, where it buys PEARL.
+ * water, and its balance is on the Tackle page, where it buys PEARL. The lifetime numbers (catches and the rest)
+ * are on the Stats page (ui/profile.ts).
  */
 import { energyCountdown, energyNow, refillPrice } from '../../game/actions';
 import { TUNING } from '../../game/content';
@@ -28,10 +29,9 @@ interface Shape {
   refill: boolean;
   level: number;
   pearl: number;
-  catches: number;
 }
 const SHAPE_KEY = 'onchain-fishing:header-shape';
-const DEFAULT_SHAPE: Shape = { refill: true, level: 1, pearl: 3, catches: 2 };
+const DEFAULT_SHAPE: Shape = { refill: true, level: 1, pearl: 3 };
 /** If the sign-in has not come back by then, the header stops waiting and offers to connect. */
 const RESTORE_WAIT_MS = 8_000;
 const bootAt = Date.now();
@@ -42,7 +42,8 @@ function recallShape(): Shape | null {
     if (!v || typeof v !== 'object') return null;
     const o = v as Record<string, unknown>;
     const len = (x: unknown, d: number): number => (typeof x === 'number' && x >= 1 && x <= 12 ? Math.floor(x) : d);
-    return { refill: o.refill === true, level: len(o.level, 1), pearl: len(o.pearl, 3), catches: len(o.catches, 2) };
+    // a shape stored by an older build has more fields than this: they are ignored
+    return { refill: o.refill === true, level: len(o.level, 1), pearl: len(o.pearl, 3) };
   } catch {
     return null;
   }
@@ -142,7 +143,6 @@ function loadingStats(on: HeaderHandlers, sh: Shape): HTMLElement {
       h('span', { class: 'regen skel', text: sh.refill ? '+1 in 00:00' : 'full' }),
     ),
     sh.refill ? h('button', { class: 'btn btn-sm skel', text: 'Refill · 100', disabled: true }) : null,
-    h('div', { class: 'stat hide-sm' }, h('span', { class: 'k', text: 'Catches' }), h('span', { class: 'v skel', text: blank(sh.catches) })),
     w
       ? who(on)
       : h('div', { class: 'stat who' }, h('span', { class: 'addr skel', text: '0x0000…0000' }), h('button', { class: 'btn btn-ghost btn-sm skel', text: 'Log out', disabled: true })),
@@ -164,7 +164,7 @@ function render(on: HeaderHandlers): HTMLElement[] {
   const s = getSave();
   const now = Date.now();
   const wait = loading(now);
-  const page = location.hash === '#/tackle' ? 'tackle' : location.hash === '#/cup' ? 'cup' : 'pond';
+  const page = location.hash === '#/tackle' ? 'tackle' : location.hash === '#/cup' ? 'cup' : location.hash === '#/profile' ? 'profile' : location.hash === '#/stats' ? 'debug' : 'pond';
   const link = (id: string, text: string, href: string): HTMLElement =>
     h('a', { class: page === id ? 'active' : '', text, attrs: { href, ...(page === id ? { 'aria-current': 'page' } : {}) } });
   const level = levelOf(s.xp);
@@ -176,7 +176,7 @@ function render(on: HeaderHandlers): HTMLElement[] {
   regenEl = wait ? null : h('span', { class: 'regen' });
   tickLocalHeader();
   if (CHAIN && !wait) {
-    if (state.wallet) rememberShape({ refill: energy < TUNING.maxEnergy, level: String(level).length, pearl: pearl(Math.floor(s.pearl)).length, catches: String(s.stats.catches).length });
+    if (state.wallet) rememberShape({ refill: energy < TUNING.maxEnergy, level: String(level).length, pearl: pearl(Math.floor(s.pearl)).length });
     else if (state.fluentStatus !== 'restoring' && state.fluentStatus !== 'connecting') rememberShape(null);
   }
   const head = [
@@ -186,7 +186,7 @@ function render(on: HeaderHandlers): HTMLElement[] {
       h('span', { class: 'logo' }, icon('bobber')),
       h('span', { class: 'wordmark' }, h('span', { class: 'wm-top', text: 'Onchain' }), h('span', { class: 'wm-main', text: 'Fishing' })),
     ),
-    h('nav', { class: 'topnav', attrs: { 'aria-label': 'Pages' } }, link('pond', 'Pond', '#/'), link('tackle', 'Tackle', '#/tackle'), link('cup', 'Cup', '#/cup')),
+    h('nav', { class: 'topnav', attrs: { 'aria-label': 'Pages' } }, link('pond', 'Pond', '#/'), link('tackle', 'Tackle', '#/tackle'), link('cup', 'Cup', '#/cup'), link('profile', 'Stats', '#/profile')),
     timeSwitch(),
   ];
   if (wait) return [...head, loadingStats(on, shape ?? DEFAULT_SHAPE)];
@@ -221,7 +221,6 @@ function render(on: HeaderHandlers): HTMLElement[] {
             onclick: () => void askRefill(),
           })
         : null,
-      h('div', { class: 'stat hide-sm' }, h('span', { class: 'k', text: 'Catches' }), h('span', { class: 'v', text: String(s.stats.catches) })),
       who(on),
     ),
   ];

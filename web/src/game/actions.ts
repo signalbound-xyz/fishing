@@ -4,6 +4,7 @@
  * the whole save in one assignment (play/state.ts), which is what makes PEARL move exactly once.
  */
 import { LURES, RODS, lureById, rodById } from '../tackle/catalog';
+import { addEvents } from './career';
 import { BLEND_PRIZE, LOCATIONS, PEARL_PER_BLEND, SPECIES, TUNING, special } from './content';
 import { DAILY_REWARD, LOCAL_PLAYER, freshDaily, localClaimed, localEarned, markLocalClaim, profileOf, recordCatch } from './daily';
 import { REWARD_ENERGY, rewardStatus, type RewardCheck } from './dailyReward';
@@ -199,7 +200,7 @@ export function startCast(s: Save, now: number): { save: Save; ticket: CastTicke
   const loc = LOCATIONS[s.location];
   const ticket: CastTicket = { locationId: loc.id, totals: currentTotals(s) };
   let n = settleEnergy(s, now);
-  n = { ...n, energy: n.energy - loc.energyCost, stats: { ...n.stats, casts: n.stats.casts + 1 } };
+  n = { ...n, energy: n.energy - loc.energyCost, stats: { ...n.stats, casts: n.stats.casts + 1 }, career: { ...n.career, waters: addEvents(n.career.waters, [{ kind: 'cast', locationId: loc.id }]) } };
   if (n.energy + loc.energyCost >= TUNING.maxEnergy) n.energyAt = now; // regen clock starts when we drop below max
   const rod = rodById(n.equipped.rod)!;
   if (rod.wear > 0) n.rods = { ...n.rods, [rod.id]: { durability: n.rods[rod.id].durability - 1 } };
@@ -307,6 +308,7 @@ export function landFish(s: Save, t: CastTicket, hooked: Hooked, quality: Qualit
     },
     weeks: { ...s.weeks, [week]: weekList },
     stats: { ...s.stats, catches: s.stats.catches + 1 },
+    career: { ...s.career, waters: addEvents(s.career.waters, [{ kind: 'catch', locationId: t.locationId, speciesId: species.id }]) },
     // the day's challenges are drawn from what the player had before this fish, should it be the day's first
     daily: recordCatch(s.daily ?? freshDaily(), { id: fish.id, speciesId: species.id, weight: fish.weight, locationId: t.locationId }, now, LOCAL_PLAYER, profileOf(s)),
   };

@@ -13,6 +13,7 @@ import { emit, state } from '../store';
 import { LURES, RODS } from '../tackle/catalog';
 import { buyPearlOnChain, inventoryReadFor, loadChainSave, loadStandings, rememberCollection, rememberLocation, tx, type GameCall } from './chain';
 import { toast } from '../ui/toast';
+import { syncMyCareer } from './career';
 import { syncDaily } from './daily';
 import { claimRewardOnChain, syncReward } from './dailyReward';
 import { act, apply, getSave, replaceSave } from './state';
@@ -38,6 +39,8 @@ export function refresh(): Promise<void> {
       // the day's challenges are read from the chain's events, after the state they are compared with
       if (s && who) void syncDaily(who, profileOf(s));
       if (s && who) void syncReward(who);
+      // the Stats page, if it is open, reads the blocks since its last look
+      if (s && who) syncMyCareer();
     } catch (e) {
       console.warn('refresh failed', e);
       // the next refresh tries again; meanwhile the page shows what it has instead of waiting forever

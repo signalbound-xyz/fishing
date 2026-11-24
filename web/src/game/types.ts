@@ -161,6 +161,16 @@ export interface DailyState {
   rewards?: { earned: number[]; claimed: number[] };
 }
 
+/** What one water has seen of one player (game/career.ts). */
+export interface WaterCount {
+  casts: number;
+  catches: number;
+  /** Casts that got no bite. Counted on the contracts only. */
+  misses: number;
+  /** Fish landed here, by species id. */
+  species: Record<number, number>;
+}
+
 export interface Save {
   version: number;
   seq: number;
@@ -198,4 +208,10 @@ export interface Save {
   stats: { casts: number; catches: number; escaped: number; sold: number; earned: number };
   /** Daily challenges of the local game. */
   daily: DailyState;
+  /**
+   * Local game: casts and catches by water, counted from `since` (ms) on. A save from before this existed gets an
+   * empty book when it loads: what was fished earlier is in `stats` and belongs to no water. On the contracts this
+   * stays empty; the same numbers are read from the game's events (game/career.ts).
+   */
+  career: { since: number; waters: Record<number, WaterCount> };
 }

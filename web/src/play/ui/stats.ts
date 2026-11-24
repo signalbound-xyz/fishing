@@ -1,5 +1,7 @@
 /**
- * Play stats (#/stats): a debug view of the gameplay telemetry kept in this browser, with export and clear.
+ * Debug telemetry (#/stats): a debug view of the gameplay telemetry kept in this browser, with export and clear.
+ * It is not the player's statistics: those are on My Stats (#/profile, ui/profile.ts), which reads the player's
+ * state and the game's events and nothing from here.
  * It shows what was measured from the person at this keyboard, never a simulation. See play/telemetry.ts.
  */
 import { LOCATIONS } from '../../game/content';
@@ -74,7 +76,8 @@ function view(s: Summary, rerender: () => void): HTMLElement[] {
     h(
       'section',
       { class: 'card ps-card' },
-      h('div', { class: 'picker-head' }, h('h2', { text: 'Play stats' }), h('a', { class: 'link', text: '← Back to the water', attrs: { href: '#/' } })),
+      h('div', { class: 'picker-head' }, h('h2', { text: 'Debug telemetry' }), h('a', { class: 'link', text: '← Back to the water', attrs: { href: '#/' } })),
+      h('p', { class: 'muted small' }, 'A debugging log, not your fishing record: your lifetime numbers are on ', h('a', { class: 'link', text: 'My Stats', attrs: { href: '#/profile' } }), '.'),
       h('p', {
         class: 'muted small',
         text: TELEMETRY_ON
@@ -92,11 +95,11 @@ function view(s: Summary, rerender: () => void): HTMLElement[] {
           text: 'Clear',
           disabled: s.events === 0,
           onclick: () => {
-            if (!confirm('Delete the recorded play stats in this browser? The game itself is not affected.')) return;
+            if (!confirm('Delete the telemetry recorded in this browser? The game and your statistics are not affected.')) return;
             clearTelemetry();
             stamp++;
             rerender();
-            toast('Play stats cleared', 'ok');
+            toast('Telemetry cleared', 'ok');
           },
         }),
       ),
