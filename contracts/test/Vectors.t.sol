@@ -119,8 +119,8 @@ contract VectorsTest is BaseTest {
         string memory d = string.concat(
             ',"bottleOpen":', p.blendWins < blendMax && bottles.open(p.xp) ? "true" : "false", ',"specialsFound":',
             vm.toString(p.specialsFound), ',"dry":[',
-            vm.toString(game.dryCatches(alice, 0)), ",", vm.toString(game.dryCatches(alice, 1)), ",",
-            vm.toString(game.dryCatches(alice, 2)), "]"
+            vm.toString(lens.dryCatches(alice, 0)), ",", vm.toString(lens.dryCatches(alice, 1)), ",",
+            vm.toString(lens.dryCatches(alice, 2)), "]"
         );
         string memory e = string.concat(',"blendChancePpm":', vm.toString(blendChance));
         return string.concat(a, b, d, e);

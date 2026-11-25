@@ -13,6 +13,7 @@ import { emit, state } from '../store';
 import { LURES, RODS } from '../tackle/catalog';
 import { buyPearlOnChain, inventoryReadFor, loadChainSave, loadStandings, rememberCollection, rememberLocation, tx, type GameCall } from './chain';
 import { toast } from '../ui/toast';
+import { trophyIds } from './hunt';
 import { syncMyCareer } from './career';
 import { syncDaily } from './daily';
 import { claimRewardOnChain, syncReward } from './dailyReward';
@@ -156,10 +157,17 @@ export const ops = {
       if (earned !== undefined) track({ e: 'sale', fish: ids.length, earned });
       return earned;
     }
+    // the game does not buy a season trophy, and one in the batch would fail the sale of the rest
+    const trophies = trophyIds();
+    if (ids.some((id) => trophies.has(id))) {
+      ids = ids.filter((id) => !trophies.has(id));
+      toast('A season trophy is not sold to the game: it stays in your keepnet', 'info');
+      if (ids.length === 0) return undefined;
+    }
     const s = getSave();
     const sold = s.fish.filter((f) => ids.includes(f.id));
     const now = Date.now();
-    // the same protections the local rules enforce; the contract itself only checks ownership
+    // the same protections the local rules enforce; beyond them the contract checks ownership and trophies
     try {
       A.sellFish(s, ids, now);
     } catch (e) {

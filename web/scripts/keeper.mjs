@@ -52,6 +52,7 @@ async function pass() {
     `[keeper] block ${body.head}${body.dryRun ? ' (dry run)' : ''} · hunt: ${hunt.attempts} attempt(s) in ${hunt.seasons} season(s), ${hunt.hits} hit(s), ${hunt.settled} recorded, ${hunt.waiting} waiting` +
       ` · casts: ${casts.seen} in the water seen, ${casts.reeled} reeled in, ${casts.expired} expired, ${casts.left} left` +
       (water ? ` · water: ${water.inWater} cast(s)${water.paused ? ', casting paused' : ''}` : '') +
+      (body.clock?.marginSeconds != null ? ` · clock: ${body.clock.lagSeconds} s behind, margin ${body.clock.marginSeconds} s` : '') +
       (body.failed ? ` · ${body.failed} FAILED` : '') +
       (body.skipped ? ` · ${body.skipped} left for the next pass` : ''),
   );

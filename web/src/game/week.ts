@@ -20,6 +20,9 @@ export const WEEK_VERSION = 1;
 /** A weekly season is exactly this many hunts. */
 export const HUNTS_PER_WEEK = 3;
 
+/** The most a ticket can cost, in whole PEARL: the script's bound (contracts/script/SeasonHunt.s.sol). */
+export const MAX_TICKET_PEARL = 1e9;
+
 export const DIFFICULTIES = ['easy', 'medium', 'hard'] as const;
 export type Difficulty = (typeof DIFFICULTIES)[number];
 export const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
@@ -41,6 +44,11 @@ export interface WeekFileHunt {
   /** Rod ids that may be used; empty = any rod. */
   rods: number[];
   minLevel: number;
+  /**
+   * Whole PEARL a wallet burns once to fish this hunt; left out (or 0) the hunt is free. Needs a hunt contract
+   * that sells tickets: the script refuses the file on one that does not.
+   */
+  ticketPearl?: number;
   dailyAttempts: number;
   /** Chance of an attempt with no bonus, in billionths. */
   baseChance: number;
@@ -171,6 +179,7 @@ export function validateWeek(f: WeekFile, cat: Catalog): string[] {
     }
     if (!Array.isArray(h.rods) || h.rods.some((r) => !whole(r, 0, Math.min(15, cat.rods - 1)))) bad.push(`${at}: a rod that is not in the game (${cat.rods} rods)`);
     if (!whole(h.minLevel, 0, 255)) bad.push(`${at}: minLevel must be 0 to 255`);
+    if (h.ticketPearl !== undefined && !whole(h.ticketPearl, 0, MAX_TICKET_PEARL)) bad.push(`${at}: ticketPearl must be a whole number of PEARL, ${MAX_TICKET_PEARL} at most`);
     if (!whole(h.dailyAttempts, 1, 65_535)) bad.push(`${at}: dailyAttempts must be at least 1`);
     if (!whole(h.maxBonus, 0, 65_535)) bad.push(`${at}: maxBonus must be a whole percent`);
     if (!whole(h.baseChance, 1, MAX_CHANCE)) bad.push(`${at}: baseChance must be 1 to ${MAX_CHANCE} billionths`);

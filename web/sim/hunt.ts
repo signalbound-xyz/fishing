@@ -7,14 +7,15 @@
  * ANGLERS below, not measurements. The conclusions that matter are the ones that hold however the mix is drawn.
  */
 import { LURES, RODS } from '../src/tackle/catalog';
-import { LOCATIONS, SPECIES, TUNING, XP_BY_RARITY } from '../src/game/content';
+import { LOCATIONS, PEARL_PER_BLEND, SPECIES, TUNING, XP_BY_RARITY } from '../src/game/content';
 import { speciesOdds } from '../src/game/generate';
 import { CHANCE_UNIT, MAX_CHANCE, atLeastOnce, chanceOf, type HuntOdds } from '../src/game/hunt';
+import { WORLD_NOW, castModel } from './lab';
 
 export const SEASON_DAYS = 7;
 export const DAILY_ATTEMPTS = 20;
 /** Energy a wallet has over a season: a full bar, and a point every half hour (the contracts' rate, in every build). */
-const ENERGY_PER_DAY = 86_400 / (30 * 60);
+export const ENERGY_PER_DAY = 86_400 / (30 * 60);
 export const seasonEnergy = (days: number): number => TUNING.maxEnergy + days * ENERGY_PER_DAY;
 
 const rod = (id: string): number => RODS.findIndex((r) => r.id === id);
@@ -252,4 +253,77 @@ export function sybilShare(c: Config, n: number, wallets: number, days = SEASON_
   const honest = weightedAttempts(c, n, days);
   const mine = wallets * Math.min(DAILY_ATTEMPTS, seasonEnergy(days) / days) * days;
   return mine / (mine + honest);
+}
+
+// ------------------------------------------------------------------ a season ticket
+
+/**
+ * A season can ask every wallet for a ticket: PEARL burned once, before its first seasonal cast (SeasonHunt.buyTicket).
+ * These are the sums behind its price. Two things are taken as given: a season fitted to three expected hits is won
+ * 95% of the time, and BLEND buys PEARL at the exchange's rate and never the other way round.
+ */
+export const SEASON_WON = 1 - Math.exp(-3);
+
+/** One free-tackle wallet at the daily cap, in base-chance casts over the season. */
+export const packWalletCasts = (days = SEASON_DAYS): number => Math.min(DAILY_ATTEMPTS, seasonEnergy(days) / days) * days;
+
+/** What the prize is worth in PEARL to whoever holds `share` of the season's total chance. */
+export const shareWorth = (share: number, prizeBlend: number): number => share * SEASON_WON * prizeBlend * PEARL_PER_BLEND;
+
+/**
+ * The ticket, in PEARL, at which the first extra free-tackle wallet is worth exactly what it pays, against an honest
+ * crowd of `n`: its share of the season's chance times the prize. Every further wallet of a pack is worth less than
+ * the first (the pack competes with itself), so at this price no pack of any size pays for itself with bought PEARL.
+ */
+export function breakEvenTicket(c: Config, n: number, prizeBlend: number, days = SEASON_DAYS): number {
+  const mine = packWalletCasts(days);
+  return shareWorth(mine / (mine + weightedAttempts(c, n, days)), prizeBlend);
+}
+
+export interface Pack {
+  wallets: number;
+  /** The chance that the winner is one of the pack, given that the season is won. */
+  share: number;
+  /** BLEND the pack wins on average. */
+  wins: number;
+  /** BLEND its tickets cost, PEARL bought at the exchange. */
+  tickets: number;
+  net: number;
+}
+
+/** What a pack of `wallets` free-tackle wallets wins and pays, against `n` honest anglers. */
+export function packOf(c: Config, n: number, prizeBlend: number, ticketPearl: number, wallets: number, days = SEASON_DAYS): Pack {
+  const mine = wallets * packWalletCasts(days);
+  const share = mine === 0 ? 0 : mine / (mine + weightedAttempts(c, n, days));
+  const wins = share * SEASON_WON * prizeBlend;
+  const tickets = (wallets * ticketPearl) / PEARL_PER_BLEND;
+  return { wallets, share, wins, tickets, net: wins - tickets };
+}
+
+/**
+ * The pack that earns its owner the most under a ticket: wallets are added while one more is worth more than its
+ * ticket. `limit` wallets at most (with no ticket every further wallet pays, and there is no best size).
+ */
+export function bestPack(c: Config, n: number, prizeBlend: number, ticketPearl: number, limit = 100_000, days = SEASON_DAYS): Pack {
+  const honest = weightedAttempts(c, n, days);
+  const m = packWalletCasts(days);
+  const value = SEASON_WON * prizeBlend * PEARL_PER_BLEND;
+  // d/dk of value·mk/(mk+H) − k·T is zero at k = (√(value·H·m/T) − H)/m
+  const ideal = ticketPearl <= 0 ? limit : (Math.sqrt((value * honest * m) / ticketPearl) - honest) / m;
+  const around = Math.max(0, Math.min(limit, Math.floor(ideal)));
+  const a = packOf(c, n, prizeBlend, ticketPearl, around, days);
+  const b = packOf(c, n, prizeBlend, ticketPearl, Math.min(limit, around + 1), days);
+  return b.net > a.net ? b : a;
+}
+
+/** PEARL an ordinary cast at the Village Pond brings with the free rod, the catch sold at once (BALANCE.md). */
+export function pondPearlPerCast(): number {
+  const m = castModel('chain', 'average', 'current', WORLD_NOW, 0, { rod: RODS[0], lure: null });
+  return m.gross - m.upkeep;
+}
+
+/** What one angler of a kind holds of the season's total chance in a crowd of `n`. */
+export function anglerShare(c: Config, n: number, a: Angler, days = SEASON_DAYS): number {
+  const i = ANGLERS.indexOf(a);
+  return (castsPerDay(a, days) * days * multipliers(c)[i]) / weightedAttempts(c, n, days);
 }

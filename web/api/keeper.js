@@ -611,6 +611,11 @@ async function firstBlockAt(r, ts, head, floor, blockSeconds = 1) {
 * attempt. A hit found that way is still put to the contract (`outcome`) before anything is sent, and a
 * disagreement is reported, never acted on.
 *
+* A pass also measures the one thing the hunt's fairness leans on outside the contracts: the chain's clock. The
+* drand round of a seasonal cast is the first one a margin after the cast's block timestamp, so the outcome of a
+* cast is unknown when it is made only while block timestamps are not further behind real time than that margin.
+* The keeper reports the lag, and says so in words when it comes near the margin (`clock` in the report).
+*
 * This module has no I/O of its own: the chain, the drand relays and the clock are passed in. The real ones are in
 * server/keeperChain.ts; the tests pass fakes.
 */
@@ -623,6 +628,8 @@ var SLACK = 64n;
 /** Under this balance the report says so (0.002 ETH: a few hundred transactions on Fluent). */
 var LOW_BALANCE_WEI = 2000000000000000n;
 var MAX_MISSES = 5e4;
+/** The clock is spoken of once its lag is this fraction of the beacon's margin: a half. */
+var CLOCK_WARN_PARTS = 2;
 var max = (a, b) => a > b ? a : b;
 var min = (a, b) => a < b ? a : b;
 var message = (e) => String(e?.shortMessage ?? e?.message ?? e).slice(0, 300);
@@ -660,6 +667,10 @@ async function runKeeper(k, opts = {}) {
 		skipped: 0,
 		water: null,
 		operator: null,
+		clock: {
+			lagSeconds: Math.round(k.now() / 1e3 - head.timestamp),
+			marginSeconds: null
+		},
 		notes: []
 	};
 	const operator = await k.chain.operator();
@@ -686,6 +697,7 @@ async function settleHits(k, hunt, head, opts, report, go) {
 	const seasons = (await hunt.seasons()).filter((s) => s.funded && !s.cancelled && head.timestamp >= s.start && head.timestamp <= s.end + s.settleWindow);
 	if (seasons.length === 0) return;
 	const beacon = await hunt.beacon();
+	if (beacon.drand) clockNote(beacon.drand.margin, seasons.some((s) => head.timestamp < s.end && !s.hooked), report);
 	const reader = {
 		head: () => k.chain.head(),
 		timestamp: (b) => k.chain.timestamp(b),
@@ -775,6 +787,21 @@ async function settleHits(k, hunt, head, opts, report, go) {
 			break;
 		}
 	}
+}
+/**
+* The chain's clock against the beacon's margin. A cast stamped `t` is decided by the first drand round at or
+* after `t + margin`. That round is in the future when the cast is made only if the stamp is less than `margin`
+* behind real time; a block stamped later than that takes casts whose outcome can be worked out before they are
+* sent. Nothing here can stop that: the note tells the operator, who can (SEASON_HUNT.md, "If the clock lags").
+*/
+function clockNote(margin, takingCasts, report) {
+	report.clock.marginSeconds = margin;
+	const lag = report.clock.lagSeconds;
+	if (lag * CLOCK_WARN_PARTS < margin) return;
+	const what = `the chain's clock is ${lag} s behind real time and the beacon's margin is ${margin} s`;
+	if (lag < margin) report.notes.push(`${what}: seasonal casts are still decided by rounds that do not exist yet, with ${margin - lag} s to spare. Watch it`);
+	else if (takingCasts) report.notes.push(`DANGER: ${what}: a seasonal cast made now is decided by a drand round that is already public. Call the running season off or pause casting until blocks are on time again`);
+	else report.notes.push(`${what}: no season is taking casts now, and none should start while it is so`);
 }
 function remember(k, key) {
 	if (!k.misses) return;
@@ -1514,25 +1541,6 @@ var fishingGameAbi = [
 			"name": "best",
 			"type": "uint32",
 			"internalType": "uint32"
-		}],
-		"stateMutability": "view"
-	},
-	{
-		"type": "function",
-		"name": "dryCatches",
-		"inputs": [{
-			"name": "",
-			"type": "address",
-			"internalType": "address"
-		}, {
-			"name": "",
-			"type": "uint256",
-			"internalType": "uint256"
-		}],
-		"outputs": [{
-			"name": "",
-			"type": "uint16",
-			"internalType": "uint16"
 		}],
 		"stateMutability": "view"
 	},
@@ -2654,59 +2662,6 @@ var fishingGameAbi = [
 		"stateMutability": "nonpayable"
 	},
 	{
-		"type": "function",
-		"name": "weekPlayer",
-		"inputs": [{
-			"name": "week",
-			"type": "uint256",
-			"internalType": "uint256"
-		}, {
-			"name": "index",
-			"type": "uint256",
-			"internalType": "uint256"
-		}],
-		"outputs": [{
-			"name": "",
-			"type": "address",
-			"internalType": "address"
-		}],
-		"stateMutability": "view"
-	},
-	{
-		"type": "function",
-		"name": "weekPlayerCount",
-		"inputs": [{
-			"name": "week",
-			"type": "uint256",
-			"internalType": "uint256"
-		}],
-		"outputs": [{
-			"name": "",
-			"type": "uint256",
-			"internalType": "uint256"
-		}],
-		"stateMutability": "view"
-	},
-	{
-		"type": "function",
-		"name": "weekTotal",
-		"inputs": [{
-			"name": "",
-			"type": "uint256",
-			"internalType": "uint256"
-		}, {
-			"name": "",
-			"type": "address",
-			"internalType": "address"
-		}],
-		"outputs": [{
-			"name": "",
-			"type": "uint32",
-			"internalType": "uint32"
-		}],
-		"stateMutability": "view"
-	},
-	{
 		"type": "event",
 		"name": "AchievementClaimed",
 		"inputs": [
@@ -3140,6 +3095,11 @@ var fishingGameAbi = [
 	{
 		"type": "error",
 		"name": "TooEarly",
+		"inputs": []
+	},
+	{
+		"type": "error",
+		"name": "TrophyNotForSale",
 		"inputs": []
 	},
 	{
@@ -3630,6 +3590,25 @@ var gameLensAbi = [
 	},
 	{
 		"type": "function",
+		"name": "dryCatches",
+		"inputs": [{
+			"name": "who",
+			"type": "address",
+			"internalType": "address"
+		}, {
+			"name": "specialId",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"outputs": [{
+			"name": "",
+			"type": "uint16",
+			"internalType": "uint16"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
 		"name": "fishNft",
 		"inputs": [],
 		"outputs": [{
@@ -3647,6 +3626,21 @@ var gameLensAbi = [
 			"name": "",
 			"type": "address",
 			"internalType": "contract FishingGame"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
+		"name": "isTrophy",
+		"inputs": [{
+			"name": "fishId",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"outputs": [{
+			"name": "",
+			"type": "bool",
+			"internalType": "bool"
 		}],
 		"stateMutability": "view"
 	},
@@ -4134,6 +4128,40 @@ var gameLensAbi = [
 	},
 	{
 		"type": "function",
+		"name": "weekPlayer",
+		"inputs": [{
+			"name": "week",
+			"type": "uint256",
+			"internalType": "uint256"
+		}, {
+			"name": "index",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"outputs": [{
+			"name": "",
+			"type": "address",
+			"internalType": "address"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
+		"name": "weekPlayerCount",
+		"inputs": [{
+			"name": "week",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"outputs": [{
+			"name": "",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
 		"name": "weekStandings",
 		"inputs": [
 			{
@@ -4162,6 +4190,30 @@ var gameLensAbi = [
 			"internalType": "uint32[]"
 		}],
 		"stateMutability": "view"
+	},
+	{
+		"type": "function",
+		"name": "weekTotal",
+		"inputs": [{
+			"name": "week",
+			"type": "uint256",
+			"internalType": "uint256"
+		}, {
+			"name": "who",
+			"type": "address",
+			"internalType": "address"
+		}],
+		"outputs": [{
+			"name": "",
+			"type": "uint32",
+			"internalType": "uint32"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "error",
+		"name": "OutOfRange",
+		"inputs": []
 	}
 ];
 // src/generated/SeasonHunt.ts
@@ -4310,6 +4362,17 @@ var seasonHuntAbi = [
 			"internalType": "contract IERC20"
 		}],
 		"stateMutability": "view"
+	},
+	{
+		"type": "function",
+		"name": "buyTicket",
+		"inputs": [{
+			"name": "id",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"outputs": [],
+		"stateMutability": "nonpayable"
 	},
 	{
 		"type": "function",
@@ -4498,6 +4561,107 @@ var seasonHuntAbi = [
 	},
 	{
 		"type": "function",
+		"name": "createTicketed",
+		"inputs": [{
+			"name": "r",
+			"type": "tuple",
+			"internalType": "struct SeasonHunt.Rules",
+			"components": [
+				{
+					"name": "name",
+					"type": "string",
+					"internalType": "string"
+				},
+				{
+					"name": "description",
+					"type": "string",
+					"internalType": "string"
+				},
+				{
+					"name": "start",
+					"type": "uint40",
+					"internalType": "uint40"
+				},
+				{
+					"name": "end",
+					"type": "uint40",
+					"internalType": "uint40"
+				},
+				{
+					"name": "speciesId",
+					"type": "uint16",
+					"internalType": "uint16"
+				},
+				{
+					"name": "waters",
+					"type": "uint16",
+					"internalType": "uint16"
+				},
+				{
+					"name": "rods",
+					"type": "uint16",
+					"internalType": "uint16"
+				},
+				{
+					"name": "minLevel",
+					"type": "uint8",
+					"internalType": "uint8"
+				},
+				{
+					"name": "dailyAttempts",
+					"type": "uint16",
+					"internalType": "uint16"
+				},
+				{
+					"name": "settleWindow",
+					"type": "uint32",
+					"internalType": "uint32"
+				},
+				{
+					"name": "baseChance",
+					"type": "uint32",
+					"internalType": "uint32"
+				},
+				{
+					"name": "maxBonus",
+					"type": "uint16",
+					"internalType": "uint16"
+				},
+				{
+					"name": "prize",
+					"type": "uint96",
+					"internalType": "uint96"
+				},
+				{
+					"name": "rodBonus",
+					"type": "uint16[16]",
+					"internalType": "uint16[16]"
+				},
+				{
+					"name": "lureBonus",
+					"type": "uint16[16]",
+					"internalType": "uint16[16]"
+				},
+				{
+					"name": "waterBonus",
+					"type": "uint16[16]",
+					"internalType": "uint16[16]"
+				}
+			]
+		}, {
+			"name": "ticket",
+			"type": "uint96",
+			"internalType": "uint96"
+		}],
+		"outputs": [{
+			"name": "id",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"stateMutability": "nonpayable"
+	},
+	{
+		"type": "function",
 		"name": "escrowed",
 		"inputs": [],
 		"outputs": [{
@@ -4548,6 +4712,25 @@ var seasonHuntAbi = [
 			"name": "",
 			"type": "address",
 			"internalType": "contract FishingGame"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
+		"name": "hasTicket",
+		"inputs": [{
+			"name": "",
+			"type": "uint256",
+			"internalType": "uint256"
+		}, {
+			"name": "",
+			"type": "address",
+			"internalType": "address"
+		}],
+		"outputs": [{
+			"name": "",
+			"type": "bool",
+			"internalType": "bool"
 		}],
 		"stateMutability": "view"
 	},
@@ -4844,6 +5027,17 @@ var seasonHuntAbi = [
 	},
 	{
 		"type": "function",
+		"name": "pearl",
+		"inputs": [],
+		"outputs": [{
+			"name": "",
+			"type": "address",
+			"internalType": "contract IPearl"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
 		"name": "reclaim",
 		"inputs": [{
 			"name": "id",
@@ -5111,6 +5305,55 @@ var seasonHuntAbi = [
 	},
 	{
 		"type": "function",
+		"name": "ticketPrice",
+		"inputs": [{
+			"name": "",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"outputs": [{
+			"name": "",
+			"type": "uint96",
+			"internalType": "uint96"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
+		"name": "tickets",
+		"inputs": [{
+			"name": "player",
+			"type": "address",
+			"internalType": "address"
+		}, {
+			"name": "ids",
+			"type": "uint256[]",
+			"internalType": "uint256[]"
+		}],
+		"outputs": [{
+			"name": "prices",
+			"type": "uint96[]",
+			"internalType": "uint96[]"
+		}, {
+			"name": "held",
+			"type": "bool[]",
+			"internalType": "bool[]"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
+		"name": "ticketsBurned",
+		"inputs": [],
+		"outputs": [{
+			"name": "",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
 		"name": "transferOwnership",
 		"inputs": [{
 			"name": "newOwner",
@@ -5366,6 +5609,22 @@ var seasonHuntAbi = [
 	},
 	{
 		"type": "event",
+		"name": "SeasonTicket",
+		"inputs": [{
+			"name": "id",
+			"type": "uint256",
+			"indexed": true,
+			"internalType": "uint256"
+		}, {
+			"name": "price",
+			"type": "uint96",
+			"indexed": false,
+			"internalType": "uint96"
+		}],
+		"anonymous": false
+	},
+	{
+		"type": "event",
 		"name": "TargetHooked",
 		"inputs": [
 			{
@@ -5388,6 +5647,31 @@ var seasonHuntAbi = [
 			},
 			{
 				"name": "finalAt",
+				"type": "uint256",
+				"indexed": false,
+				"internalType": "uint256"
+			}
+		],
+		"anonymous": false
+	},
+	{
+		"type": "event",
+		"name": "TicketBought",
+		"inputs": [
+			{
+				"name": "id",
+				"type": "uint256",
+				"indexed": true,
+				"internalType": "uint256"
+			},
+			{
+				"name": "player",
+				"type": "address",
+				"indexed": true,
+				"internalType": "address"
+			},
+			{
+				"name": "price",
 				"type": "uint256",
 				"indexed": false,
 				"internalType": "uint256"
@@ -5453,6 +5737,11 @@ var seasonHuntAbi = [
 	{
 		"type": "error",
 		"name": "NoCatch",
+		"inputs": []
+	},
+	{
+		"type": "error",
+		"name": "NoTicketToBuy",
 		"inputs": []
 	},
 	{
@@ -5535,6 +5824,11 @@ var seasonHuntAbi = [
 	{
 		"type": "error",
 		"name": "TargetAlreadyHooked",
+		"inputs": []
+	},
+	{
+		"type": "error",
+		"name": "TicketRequired",
 		"inputs": []
 	},
 	{

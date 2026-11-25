@@ -10,6 +10,11 @@ import {FishNFT} from "./FishNFT.sol";
 import {CatchMath} from "./CatchMath.sol";
 import {IHuntBeacon} from "./HuntBeacon.sol";
 
+/// @dev The game's PEARL, as far as the hunt uses it: a holder burns its own.
+interface IPearl {
+    function burn(uint256 amount) external;
+}
+
 /// @title Season Hunt: one fish, one prize, the first angler to hook it.
 /// @notice A season names a target fish, the waters it can be hooked in, and a BLEND prize that is in this
 ///         contract before the season opens. A seasonal cast is an ordinary cast of the game, made through this
@@ -30,7 +35,13 @@ import {IHuntBeacon} from "./HuntBeacon.sol";
 ///         settled simply runs out. A season with no hit by `end + settleWindow` has expired, and its sponsor
 ///         takes the prize back or moves it to a later season.
 ///
-///         What it can touch. The prize token it was given, and through the game's hook (FishingGame.castFor,
+///         The ticket. A season may ask every wallet for a ticket: a price in PEARL, paid once per season and
+///         burned on the spot. A wallet's casts are free of charge beyond what the game itself takes, so without
+///         a ticket a second wallet costs nothing; with one, every wallet a person adds pays again, every
+///         season. The price is part of the season's rules and is fixed with them. Nobody receives the PEARL.
+///
+///         What it can touch. The prize token it was given, PEARL a player approved for a ticket (burned in the
+///         same call), and through the game's hook (FishingGame.castFor,
 ///         landFor) a cast paid by the caster and one trophy fish per season, minted to the winner. It mints no
 ///         PEARL and holds no other asset. A season's rules cannot be changed once it is created.
 /// @dev A plain contract, not a proxy: nobody can change the code that holds a prize. Not audited.
@@ -120,12 +131,21 @@ contract SeasonHunt is Ownable, ReentrancyGuard {
     FishNFT public immutable fishNft;
     IERC20 public immutable blend;
     IHuntBeacon public immutable beacon;
+    /// @notice The game's PEARL: what a ticket is paid in.
+    IPearl public immutable pearl;
 
     Season[] internal _seasons;
     mapping(uint256 => mapping(uint256 => Attempt)) internal _attempts;
     mapping(uint256 => mapping(address => Tally)) internal _tallies;
     /// @notice BLEND this contract owes: the prizes of funded seasons that are neither paid nor returned.
     uint256 public escrowed;
+    /// @notice What a wallet burns, once, to cast in season `id`, in PEARL wei. Zero: the season is free. Set
+    ///         when the season is created and never changed.
+    mapping(uint256 => uint96) public ticketPrice;
+    /// @notice Whether `player` has bought the ticket of season `id`.
+    mapping(uint256 => mapping(address => bool)) public hasTicket;
+    /// @notice PEARL burned for tickets, all seasons together.
+    uint256 public ticketsBurned;
 
     error BadSeason();
     error UnknownSeason();
@@ -150,8 +170,13 @@ contract SeasonHunt is Ownable, ReentrancyGuard {
     error NothingToClaim();
     error AlreadyClaimed();
     error AlreadyStarted();
+    error TicketRequired();
+    error NoTicketToBuy();
 
     event SeasonCreated(uint256 indexed id, string name, uint16 speciesId, uint40 start, uint40 end, uint96 prize);
+    /// @notice Season `id` asks every wallet for a ticket of `price` PEARL wei. Not emitted for a free season.
+    event SeasonTicket(uint256 indexed id, uint96 price);
+    event TicketBought(uint256 indexed id, address indexed player, uint256 price);
     event SeasonFunded(uint256 indexed id, address indexed sponsor, uint256 amount);
     event SeasonCancelled(uint256 indexed id);
     /// @param chance the attempt's chance at the target, in billionths
@@ -173,13 +198,20 @@ contract SeasonHunt is Ownable, ReentrancyGuard {
         fishNft = fish_;
         blend = blend_;
         beacon = beacon_;
+        pearl = IPearl(address(game_.pearl()));
     }
 
     // ------------------------------------------------------------------ organising
 
     /// @notice Announces a season. Nothing can be cast until the whole prize is in (`fund`), and that must
     ///         happen before `start`.
-    function create(Rules calldata r) external onlyOwner returns (uint256 id) {
+    function create(Rules calldata r) external returns (uint256 id) {
+        return createTicketed(r, 0);
+    }
+
+    /// @notice Announces a season that asks every wallet for a ticket of `ticket` PEARL wei (`buyTicket`); zero
+    ///         is a free season.
+    function createTicketed(Rules calldata r, uint96 ticket) public onlyOwner returns (uint256 id) {
         if (
             r.start <= block.timestamp || r.end <= r.start || r.prize == 0 || r.dailyAttempts == 0
                 || r.baseChance == 0 || r.speciesId >= fishNft.speciesCount() || r.waters == 0
@@ -190,6 +222,10 @@ contract SeasonHunt is Ownable, ReentrancyGuard {
         id = _seasons.length;
         _seasons.push().rules = r;
         emit SeasonCreated(id, r.name, r.speciesId, r.start, r.end, r.prize);
+        if (ticket != 0) {
+            ticketPrice[id] = ticket;
+            emit SeasonTicket(id, ticket);
+        }
     }
 
     /// @notice Puts up the whole prize of a season, from the caller (approve BLEND first). Once, and only before
@@ -224,19 +260,48 @@ contract SeasonHunt is Ownable, ReentrancyGuard {
 
     // ------------------------------------------------------------------ fishing
 
+    /// @dev A season takes casts: it is funded, running, not called off, and nobody holds the catch yet (every
+    ///      attempt from then on would be later than the recorded hit, and so could not win).
+    function _open(Season storage s) internal view {
+        Rules storage r = s.rules;
+        if (s.cancelled || block.timestamp < r.start || block.timestamp >= r.end) revert NotOpen();
+        if (s.sponsor == address(0)) revert NotFunded();
+        if (s.hooked) revert TargetAlreadyHooked();
+    }
+
+    /// @dev The caller has the level the season asks for.
+    function _levelled(Rules storage r) internal view {
+        uint256 level = r.minLevel;
+        if (level > 1 && game.playerOf(msg.sender).xp < 50 * level * (level - 1)) revert LevelTooLow();
+    }
+
+    /// @notice Buys the caller's ticket for season `id`: its price in PEARL leaves the caller and is burned
+    ///         (approve PEARL to this contract first). Once per wallet and season, and only while the wallet
+    ///         could cast: the season is running and funded, nobody holds the catch, and the caller has the
+    ///         level it asks for. A ticket is not returned, whoever wins.
+    function buyTicket(uint256 id) external nonReentrant {
+        Season storage s = _get(id);
+        uint256 price = ticketPrice[id];
+        if (price == 0 || hasTicket[id][msg.sender]) revert NoTicketToBuy();
+        _open(s);
+        _levelled(s.rules);
+        hasTicket[id][msg.sender] = true;
+        ticketsBurned += price;
+        IERC20(address(pearl)).safeTransferFrom(msg.sender, address(this), price);
+        pearl.burn(price);
+        emit TicketBought(id, msg.sender, price);
+    }
+
     /// @notice A seasonal cast at `water`: an ordinary cast of the caller in the game (energy, rod wear and lure
     ///         as always, the catch is landed in the game as always) that is also one attempt at the target.
     /// @return seq the attempt's number in the season: lower is earlier
     function cast(uint256 id, uint8 water) external nonReentrant returns (uint64 seq) {
         Season storage s = _get(id);
         Rules storage r = s.rules;
-        if (s.cancelled || block.timestamp < r.start || block.timestamp >= r.end) revert NotOpen();
-        if (s.sponsor == address(0)) revert NotFunded();
-        // every attempt from here on would be later than the recorded hit, and so could not win
-        if (s.hooked) revert TargetAlreadyHooked();
+        _open(s);
         if ((r.waters >> water) & 1 == 0) revert WrongWater();
-        uint256 level = r.minLevel;
-        if (level > 1 && game.playerOf(msg.sender).xp < 50 * level * (level - 1)) revert LevelTooLow();
+        _levelled(r);
+        if (ticketPrice[id] != 0 && !hasTicket[id][msg.sender]) revert TicketRequired();
 
         Tally storage t = _tallies[id][msg.sender];
         uint32 today = uint32(block.timestamp / 1 days);
@@ -465,6 +530,21 @@ contract SeasonHunt is Ownable, ReentrancyGuard {
         uint256 used = t.day == block.timestamp / 1 days ? t.used : 0;
         uint256 limit = _seasons[id].rules.dailyAttempts;
         return used >= limit ? 0 : limit - used;
+    }
+
+    /// @notice The ticket of each season in `ids`: its price in PEARL wei (zero: free) and whether `player` holds
+    ///         it. An id that does not exist reads as free.
+    function tickets(address player, uint256[] calldata ids)
+        external
+        view
+        returns (uint96[] memory prices, bool[] memory held)
+    {
+        prices = new uint96[](ids.length);
+        held = new bool[](ids.length);
+        for (uint256 i; i < ids.length; i++) {
+            prices[i] = ticketPrice[ids[i]];
+            held[i] = hasTicket[ids[i]][player];
+        }
     }
 
     /// @notice Seasons from the newest back: `limit` of them after skipping `offset`, each with its status, the

@@ -711,25 +711,6 @@ var fishingGameAbi = [
 	},
 	{
 		"type": "function",
-		"name": "dryCatches",
-		"inputs": [{
-			"name": "",
-			"type": "address",
-			"internalType": "address"
-		}, {
-			"name": "",
-			"type": "uint256",
-			"internalType": "uint256"
-		}],
-		"outputs": [{
-			"name": "",
-			"type": "uint16",
-			"internalType": "uint16"
-		}],
-		"stateMutability": "view"
-	},
-	{
-		"type": "function",
 		"name": "energyGranter",
 		"inputs": [],
 		"outputs": [{
@@ -1846,59 +1827,6 @@ var fishingGameAbi = [
 		"stateMutability": "nonpayable"
 	},
 	{
-		"type": "function",
-		"name": "weekPlayer",
-		"inputs": [{
-			"name": "week",
-			"type": "uint256",
-			"internalType": "uint256"
-		}, {
-			"name": "index",
-			"type": "uint256",
-			"internalType": "uint256"
-		}],
-		"outputs": [{
-			"name": "",
-			"type": "address",
-			"internalType": "address"
-		}],
-		"stateMutability": "view"
-	},
-	{
-		"type": "function",
-		"name": "weekPlayerCount",
-		"inputs": [{
-			"name": "week",
-			"type": "uint256",
-			"internalType": "uint256"
-		}],
-		"outputs": [{
-			"name": "",
-			"type": "uint256",
-			"internalType": "uint256"
-		}],
-		"stateMutability": "view"
-	},
-	{
-		"type": "function",
-		"name": "weekTotal",
-		"inputs": [{
-			"name": "",
-			"type": "uint256",
-			"internalType": "uint256"
-		}, {
-			"name": "",
-			"type": "address",
-			"internalType": "address"
-		}],
-		"outputs": [{
-			"name": "",
-			"type": "uint32",
-			"internalType": "uint32"
-		}],
-		"stateMutability": "view"
-	},
-	{
 		"type": "event",
 		"name": "AchievementClaimed",
 		"inputs": [
@@ -2332,6 +2260,11 @@ var fishingGameAbi = [
 	{
 		"type": "error",
 		"name": "TooEarly",
+		"inputs": []
+	},
+	{
+		"type": "error",
+		"name": "TrophyNotForSale",
 		"inputs": []
 	},
 	{

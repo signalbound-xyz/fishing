@@ -82,7 +82,7 @@ contract SeasonWeekTest is HuntBase {
         assertEq(w.rules[0].maxBonus, 50);
         assertEq(w.rules[2].maxBonus, 200);
         assertEq(w.rules[2].waterBonus[3], 40);
-        for (uint256 i; i < 3; i++) assertEq(w.rules[i].settleWindow, 3600);
+        for (uint256 i; i < 3; i++) assertEq(w.rules[i].settleWindow, 6 hours);
     }
 
     function _refusedFile(string memory from, string memory to, string memory why) internal {
@@ -240,6 +240,89 @@ contract SeasonWeekTest is HuntBase {
         script.rehearseWeek(hunt, changed, owner, sponsor);
     }
 
+    // ------------------------------------------------------------------ tickets
+
+    /// @dev The repository's week with a ticket of 250 PEARL on its second hunt.
+    function _ticketedJson() internal view returns (string memory out) {
+        out = vm.replace(json, "\"minLevel\": 2,", "\"minLevel\": 2, \"ticketPearl\": 250,");
+        assertTrue(keccak256(bytes(out)) != keccak256(bytes(json)), "the file was not changed");
+    }
+
+    function test_a_week_without_ticket_lines_is_free() public {
+        SeasonHuntScript.Week memory w = _week();
+        for (uint256 i; i < 3; i++) assertEq(w.tickets[i], 0);
+        uint256[] memory ids = _announce();
+        for (uint256 i; i < 3; i++) assertEq(hunt.ticketPrice(ids[i]), 0);
+    }
+
+    function test_a_hunt_of_a_week_may_ask_for_a_ticket() public {
+        string memory ticketed = _ticketedJson();
+        SeasonHuntScript.Week memory w = script.weekFrom(ticketed, 18);
+        assertEq(w.tickets[0], 0);
+        assertEq(w.tickets[1], 250 ether);
+        assertEq(w.tickets[2], 0);
+        // the ticket is no part of the rules: they are the free week's, to the byte
+        assertEq(keccak256(abi.encode(w.rules)), keccak256(abi.encode(_week().rules)));
+
+        uint256[] memory ids = script.rehearseWeek(hunt, ticketed, owner, sponsor);
+        assertEq(hunt.ticketPrice(ids[0]), 0);
+        assertEq(hunt.ticketPrice(ids[1]), 250 ether);
+        assertEq(hunt.ticketPrice(ids[2]), 0);
+        assertEq(hunt.escrowed(), 1000 ether);
+
+        // and a second run finds the three it made
+        uint256[] memory again = script.rehearseWeek(hunt, ticketed, owner, sponsor);
+        assertEq(hunt.count(), 3);
+        for (uint256 i; i < 3; i++) assertEq(again[i], ids[i]);
+
+        // the ticketed hunt takes a cast with the ticket and not without
+        while (game.playerOf(alice).xp < 100) _catch(alice, 0, 77);
+        vm.warp(w.rules[1].start);
+        vm.prank(alice);
+        vm.expectRevert(SeasonHunt.TicketRequired.selector);
+        hunt.cast(ids[1], 0);
+        pearl.mint(alice, 250 ether);
+        vm.startPrank(alice);
+        pearl.approve(address(hunt), 250 ether);
+        hunt.buyTicket(ids[1]);
+        vm.stopPrank();
+        _cast(ids[1], alice, 0);
+    }
+
+    function test_a_ticket_changed_after_the_hunt_was_created_does_not_pass_for_it() public {
+        string memory ticketed = _ticketedJson();
+        script.rehearseWeek(hunt, ticketed, owner, sponsor);
+        // the same rules at another price, and the same rules for free, are other hunts
+        string memory dearer = vm.replace(ticketed, "\"ticketPearl\": 250", "\"ticketPearl\": 300");
+        vm.expectRevert(bytes("hunt 2 runs while season 1 does (The Night Catfish)"));
+        script.rehearseWeek(hunt, dearer, owner, sponsor);
+        vm.expectRevert(bytes("hunt 2 runs while season 1 does (The Night Catfish)"));
+        script.rehearseWeek(hunt, json, owner, sponsor);
+    }
+
+    function test_a_ticket_is_written_in_whole_pearl() public {
+        string memory silly = vm.replace(_ticketedJson(), "\"ticketPearl\": 250", "\"ticketPearl\": 250000000000000000000");
+        vm.expectRevert(bytes("ticketPearl is in whole PEARL"));
+        script.weekFrom(silly, 18);
+    }
+
+    /// @dev The first release of the hunt has no tickets. A free week is created on it as before; a week that
+    ///      asks for a ticket is refused before anything is sent.
+    function test_a_hunt_that_sells_no_tickets_takes_free_weeks_only() public {
+        vm.mockCallRevert(address(hunt), abi.encodeWithSelector(hunt.ticketPrice.selector), "");
+        string memory ticketed = _ticketedJson();
+        vm.expectRevert(bytes("hunt 2: asks for a ticket, and this hunt sells none"));
+        script.rehearseWeek(hunt, ticketed, owner, sponsor);
+        assertEq(hunt.count(), 0);
+        uint256[] memory ids = _announce();
+        assertEq(ids.length, 3);
+        assertEq(hunt.count(), 3);
+        // and it finds them again
+        uint256[] memory again = _announce();
+        for (uint256 i; i < 3; i++) assertEq(again[i], ids[i]);
+        assertEq(hunt.count(), 3);
+    }
+
     // ------------------------------------------------------------------ three hunts side by side
 
     /// @dev The whole week: the first fish is hooked within the hour, the second on its second day, the third
@@ -295,7 +378,7 @@ contract SeasonWeekTest is HuntBase {
         hunt.cast(ids[2], 0);
         vm.warp(MONDAY + 7 days);
         assertEq(uint8(_status(ids[2])), uint8(SeasonHunt.Status.Closing));
-        vm.warp(MONDAY + 7 days + 3601);
+        vm.warp(MONDAY + 7 days + 6 hours + 1);
         assertEq(uint8(_status(ids[2])), uint8(SeasonHunt.Status.Expired));
 
         // three results, three prizes, each its own
@@ -367,7 +450,7 @@ contract SeasonWeekTest is HuntBase {
 
     function test_the_prize_nobody_won_moves_on_only_by_its_sponsors_hand() public {
         uint256[] memory ids = _announce();
-        vm.warp(MONDAY + 7 days + 3601);
+        vm.warp(MONDAY + 7 days + 6 hours + 1);
         // next week's last hunt is announced with the same prize
         SeasonHunt.Rules memory next = _week().rules[2];
         next.start += 7 days;

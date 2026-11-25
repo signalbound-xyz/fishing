@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHANCE_UNIT, MAX_CHANCE, atLeastOnce, bestChance, bonusParts, chanceOf, countdown, drandRound, drandTime, huntHit, huntSeed, idsOf, levelOfXp, oddsText, shareText, timesText, type HuntDraw, type HuntOdds } from './hunt';
+import { CHANCE_UNIT, MAX_CHANCE, atLeastOnce, bestChance, bonusParts, chanceOf, countdown, drandRound, drandTime, huntHit, huntSeed, idsOf, levelOfXp, logRanges, oddsText, shareText, timesText, type HuntDraw, type HuntOdds } from './hunt';
 import vectors from './fixtures/hunt.json';
 
 // The season of contracts/test/SeasonHunt.t.sol (`_rules`), and the chances the contract gives for it there.
@@ -151,5 +151,36 @@ describe('the draw of an attempt', () => {
       expect(huntHit(v, 0)).toBe(false);
       expect(huntHit(v, CHANCE_UNIT)).toBe(true);
     }
+  });
+});
+
+describe('reading a hunt\'s log back', () => {
+  const blocks = (r: [bigint, bigint][]): bigint => r.reduce((a, [from, to]) => a + (to - from + 1n), 0n);
+
+  it('covers a six-hour window in queries of ten thousand blocks, newest first, with no gap and no overlap', () => {
+    const head = 50_000_000n;
+    const back = 6 * 3600 * 2 + 120;
+    const r = logRanges(head, back);
+    expect(r).toHaveLength(5);
+    expect(r[0][1]).toBe(head);
+    expect(r.at(-1)![0]).toBe(head - BigInt(back));
+    for (let i = 1; i < r.length; i++) expect(r[i][1]).toBe(r[i - 1][0] - 1n);
+    for (const [from, to] of r) expect(to - from + 1n).toBeLessThanOrEqual(10_000n);
+    expect(blocks(r)).toBe(BigInt(back) + 1n);
+  });
+
+  it('a short window is one query, as before', () => {
+    expect(logRanges(1_000_000n, 3600 * 2 + 120)).toEqual([[1_000_000n - 7320n, 1_000_000n]]);
+  });
+
+  it('stops at the first block of a young chain, and at a day for a window longer than that', () => {
+    expect(logRanges(4_000n, 43_320)).toEqual([[0n, 4_000n]]);
+    expect(logRanges(12_000n, 43_320)).toEqual([
+      [2_001n, 12_000n],
+      [0n, 2_000n],
+    ]);
+    const week = logRanges(50_000_000n, 7 * 86_400 * 2);
+    expect(week).toHaveLength(11);
+    expect(week.at(-1)![0]).toBe(50_000_000n - 100_000n);
   });
 });

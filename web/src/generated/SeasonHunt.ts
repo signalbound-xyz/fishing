@@ -165,6 +165,19 @@ export const seasonHuntAbi = [
   },
   {
     "type": "function",
+    "name": "buyTicket",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "cancel",
     "inputs": [
       {
@@ -369,6 +382,112 @@ export const seasonHuntAbi = [
   },
   {
     "type": "function",
+    "name": "createTicketed",
+    "inputs": [
+      {
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct SeasonHunt.Rules",
+        "components": [
+          {
+            "name": "name",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "description",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "start",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "end",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "speciesId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "waters",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "rods",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "minLevel",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "dailyAttempts",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "settleWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "baseChance",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxBonus",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "prize",
+            "type": "uint96",
+            "internalType": "uint96"
+          },
+          {
+            "name": "rodBonus",
+            "type": "uint16[16]",
+            "internalType": "uint16[16]"
+          },
+          {
+            "name": "lureBonus",
+            "type": "uint16[16]",
+            "internalType": "uint16[16]"
+          },
+          {
+            "name": "waterBonus",
+            "type": "uint16[16]",
+            "internalType": "uint16[16]"
+          }
+        ]
+      },
+      {
+        "name": "ticket",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "escrowed",
     "inputs": [],
     "outputs": [
@@ -428,6 +547,30 @@ export const seasonHuntAbi = [
         "name": "",
         "type": "address",
         "internalType": "contract FishingGame"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hasTicket",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -731,6 +874,19 @@ export const seasonHuntAbi = [
   },
   {
     "type": "function",
+    "name": "pearl",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IPearl"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "reclaim",
     "inputs": [
       {
@@ -1023,6 +1179,67 @@ export const seasonHuntAbi = [
   },
   {
     "type": "function",
+    "name": "ticketPrice",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint96",
+        "internalType": "uint96"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tickets",
+    "inputs": [
+      {
+        "name": "player",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "ids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "prices",
+        "type": "uint96[]",
+        "internalType": "uint96[]"
+      },
+      {
+        "name": "held",
+        "type": "bool[]",
+        "internalType": "bool[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ticketsBurned",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -1285,6 +1502,25 @@ export const seasonHuntAbi = [
   },
   {
     "type": "event",
+    "name": "SeasonTicket",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "price",
+        "type": "uint96",
+        "indexed": false,
+        "internalType": "uint96"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TargetHooked",
     "inputs": [
       {
@@ -1307,6 +1543,31 @@ export const seasonHuntAbi = [
       },
       {
         "name": "finalAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TicketBought",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "player",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "price",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1372,6 +1633,11 @@ export const seasonHuntAbi = [
   {
     "type": "error",
     "name": "NoCatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoTicketToBuy",
     "inputs": []
   },
   {
@@ -1460,6 +1726,11 @@ export const seasonHuntAbi = [
   {
     "type": "error",
     "name": "TargetAlreadyHooked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TicketRequired",
     "inputs": []
   },
   {

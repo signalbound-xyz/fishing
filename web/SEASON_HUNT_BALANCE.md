@@ -179,7 +179,84 @@ What each extra wallet costs its owner under a season’s entry rules:
 | A paid rod (Carbon Spinner) | 1,500 PEARL, earned by selling fish or bought |
 
 For scale: the honest crowd of 1,000 makes 128,504 base-chance casts’ worth of attempts a season, and one full-cap free wallet 140.
+
+### A season ticket: what it has to cost (recommended table)
+
+A ticket is PEARL burned once per wallet and season. The exchange sells 100 PEARL for 1 BLEND and buys none back. The cell is the ticket at which one more free-tackle wallet at the daily cap (140 casts) is worth exactly what it pays: its share of the season’s chance, times the prize, times the 95% of seasons that are won. At that price and above, no pack of wallets pays for itself with bought PEARL.
+
+| Honest anglers | Prize 200 BLEND | Prize 300 BLEND | Prize 500 BLEND | Prize 1,000 BLEND |
+|---|---|---|---|---|
+| 10 | 2,071 PEARL | 3,107 PEARL | 5,178 PEARL | 10,357 PEARL |
+| 100 | 205 PEARL | 307 PEARL | 512 PEARL | 1,024 PEARL |
+| 1,000 | 21 PEARL | 31 PEARL | 52 PEARL | 103 PEARL |
+| 10,000 | 2 PEARL | 3 PEARL | 5 PEARL | 10 PEARL |
+
+### A pack of wallets against a ticket (100 honest anglers, prize 500 BLEND)
+
+The pack is the size that earns its owner the most at that price (capped at 10,000 wallets where every further wallet pays). BLEND, averaged over seasons; the tickets are bought at the exchange.
+
+| Ticket | Best pack | Chance the winner is in it | Wins | Pays for tickets | Net |
+|---|---|---|---|---|---|
+| none | 10,000 wallets | 99% | 470.8 | 0.0 | +470.8 |
+| 128 PEARL (a quarter of break-even) | 93 wallets | 50% | 239.1 | 119.0 | +120.1 |
+| 256 PEARL (half of break-even) | 39 wallets | 30% | 141.7 | 99.8 | +41.8 |
+| 512 PEARL (break-even) | 1 wallet | 1% | 5.1 | 5.1 | +0.0 |
+| 1,024 PEARL (twice break-even) | 0 wallets | 0% | 0.0 | 0.0 | +0.0 |
+
+A pack of 100 wallets that comes anyway at the break-even price wins 247.7 BLEND on average and burns 512.0 BLEND of PEARL.
+
+### What the same ticket is to an honest angler (100 honest anglers, prize 500 BLEND)
+
+The ticket is the break-even one of the table above, 512 PEARL. “Worth” is the angler’s own share of the season’s chance times the prize, in PEARL at the exchange’s rate. An ordinary cast at the Village Pond with the free rod brings 23.8 PEARL, and a wallet’s energy 1,144 PEARL a day there.
+
+| Angler | Own share of the season’s chance | Worth of that share | Ticket | Ticket ÷ worth | Ticket in pond casts |
+|---|---|---|---|---|---|
+| Newcomer | 0.44% | 207 PEARL | 512 PEARL | ×2.5 | 21 |
+| Regular | 1.30% | 616 PEARL | 512 PEARL | ×0.8 | 21 |
+| Enthusiast | 2.40% | 1,141 PEARL | 512 PEARL | ×0.4 | 21 |
+| Best equipped | 2.77% | 1,316 PEARL | 512 PEARL | ×0.4 | 21 |
+
+### A ticket earned, not bought
+
+PEARL is also earned by fishing, and energy is free. A wallet that fishes the pond with all its energy and sells every fish earns about 1,144 PEARL a day, 8,005 a week. This is what a ticket costs such a wallet in its own time, every season:
+
+| Ticket | Pond casts to earn it | Days of a wallet’s energy | BLEND, if bought instead |
+|---|---|---|---|
+| 100 PEARL | 4 | 0.1 | 1.0 |
+| 250 PEARL | 10 | 0.2 | 2.5 |
+| 500 PEARL | 21 | 0.4 | 5.0 |
+| 1,000 PEARL | 42 | 0.9 | 10.0 |
+| 2,500 PEARL | 105 | 2.2 | 25.0 |
+| 5,000 PEARL | 210 | 4.4 | 50.0 |
+
 <!-- sim:hunt:end -->
+
+## Setting a ticket
+
+A hunt can ask every wallet for a ticket in PEARL, burned once per season (`ticketPearl` in a week file;
+SEASON_HUNT.md, "How a season runs"). The four tables above it are arithmetic on the same model crowd, with no
+sampling. What they say:
+
+1. **The price that stops a bought pack is `rate × prize × 95% × 140 ÷ (the honest crowd's weighted casts)`.**
+   It is the worth of one more free-tackle wallet. It falls as the crowd grows (512 PEARL for 500 BLEND and 100
+   anglers, 52 for 1,000 anglers) and it has to be set for the crowd that is expected, like the base chance. Set
+   too low it leaves a profit: at half the price a pack still nets 8% of the prize, at a quarter 24%.
+2. **A flat ticket weighs most on the player with the least.** At the break-even price a newcomer pays 2.5 times
+   what their own chance is worth and the best-equipped angler 0.4 times. The easy hunt of a week is the one a
+   newcomer fishes; a ticket there costs the hunt its open door.
+3. **Earned PEARL is cheap.** One ordinary cast at the pond brings about 24 PEARL and a wallet has 48 energy a
+   day, so the 512 PEARL ticket is under half a day of one wallet's play. PEARL cannot be sold back for BLEND, so
+   to a farm that earns it, it costs time and gas only. Against such a farm the ticket is a recurring delay per
+   wallet and season, on top of the one-time `minLevel`; it is not a wall.
+
+A way to use it that follows from this: no ticket on the easy hunt, and on the medium and hard hunts the
+break-even price for the crowd expected, rounded up. For `2026-w50` (prizes of 200, 300 and 500 BLEND) and a crowd
+of 100 that is 0, about 310 and about 520 PEARL. The week file in the repository has no `ticketPearl` lines: the
+hunt on Fluent Testnet sells no tickets, and the price is the organiser's decision.
+
+Assumptions to keep in mind: the pack fishes free tackle at the pond at the daily cap, which is its cheapest
+wallet; the honest crowd is the model crowd; a season is won 95% of the time. A pack with paid tackle has a
+larger share per wallet and a larger cost per wallet; the tables do not cover it.
 
 ## Weekly seasons: three hunts
 

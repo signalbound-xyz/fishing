@@ -8,7 +8,8 @@ import { expect, it } from 'vitest';
 import { LURES, RODS } from '../src/tackle/catalog';
 import { LOCATIONS } from '../src/game/content';
 import { CHANCE_UNIT, chanceOf, oddsText } from '../src/game/hunt';
-import { ANGLERS, CONFIGS, DAILY_ATTEMPTS, RECOMMENDED, SEASON_DAYS, calibrate, castsPerDay, crowd, multipliers, pondXpPerCast, runSeasons, seasonCost, seasonEnergy, sybilShare, weightedAttempts } from './hunt';
+import { ANGLERS, CONFIGS, DAILY_ATTEMPTS, ENERGY_PER_DAY, RECOMMENDED, SEASON_DAYS, anglerShare, bestPack, breakEvenTicket, calibrate, castsPerDay, crowd, multipliers, packOf, packWalletCasts, pondPearlPerCast, pondXpPerCast, runSeasons, seasonCost, seasonEnergy, shareWorth, sybilShare, weightedAttempts } from './hunt';
+import { PEARL_PER_BLEND } from '../src/game/content';
 import { mulberry32 } from './lab';
 
 const BEGIN = '<!-- sim:hunt:begin -->';
@@ -133,7 +134,57 @@ it('writes the season hunt numbers', () => {
   out.push('');
   out.push(`For scale: the honest crowd of 1,000 makes ${num(weightedAttempts(RECOMMENDED, 1000))} base-chance casts’ worth of attempts a season, and one full-cap free wallet ${DAILY_ATTEMPTS * SEASON_DAYS}.`);
 
+  // ---------------------------------------------------------------- a season ticket
+  out.push('', '### A season ticket: what it has to cost (recommended table)', '');
+  const PRIZES = [200, 300, 500, 1000];
+  const pond = pondPearlPerCast();
+  const dayPearl = ENERGY_PER_DAY * pond;
+  out.push(
+    `A ticket is PEARL burned once per wallet and season. The exchange sells ${PEARL_PER_BLEND} PEARL for 1 BLEND and buys none back. The cell is the ticket at which one more free-tackle wallet at the daily cap (${packWalletCasts()} casts) is worth exactly what it pays: its share of the season’s chance, times the prize, times the ${pct(1 - Math.exp(-3))} of seasons that are won. At that price and above, no pack of wallets pays for itself with bought PEARL.`,
+    '',
+  );
+  out.push(`| Honest anglers | ${PRIZES.map((p) => `Prize ${num(p)} BLEND`).join(' | ')} |`, `|---|${PRIZES.map(() => '---').join('|')}|`);
+  for (const n of CROWDS) out.push(`| ${num(n)} | ${PRIZES.map((p) => `${num(breakEvenTicket(RECOMMENDED, n, p))} PEARL`).join(' | ')} |`);
+  out.push('');
+
+  out.push('### A pack of wallets against a ticket (100 honest anglers, prize 500 BLEND)', '');
+  const even = breakEvenTicket(RECOMMENDED, 100, 500);
+  out.push('The pack is the size that earns its owner the most at that price (capped at 10,000 wallets where every further wallet pays). BLEND, averaged over seasons; the tickets are bought at the exchange.', '');
+  out.push('| Ticket | Best pack | Chance the winner is in it | Wins | Pays for tickets | Net |', '|---|---|---|---|---|---|');
+  for (const [label, t] of [
+    ['none', 0],
+    ['a quarter of break-even', even / 4],
+    ['half of break-even', even / 2],
+    ['break-even', even],
+    ['twice break-even', even * 2],
+  ] as const) {
+    const p = bestPack(RECOMMENDED, 100, 500, t, 10_000);
+    out.push(`| ${t ? `${num(t)} PEARL (${label})` : 'none'} | ${num(p.wallets)} wallet${p.wallets === 1 ? '' : 's'} | ${pct(p.share)} | ${p.wins.toFixed(1)} | ${p.tickets.toFixed(1)} | ${p.net >= 0 ? '+' : ''}${p.net.toFixed(1)} |`);
+  }
+  // the same pack, kept at 100 wallets whatever the price: what a fixed attacker loses
+  const fixed = packOf(RECOMMENDED, 100, 500, even, 100);
+  out.push('', `A pack of 100 wallets that comes anyway at the break-even price wins ${fixed.wins.toFixed(1)} BLEND on average and burns ${fixed.tickets.toFixed(1)} BLEND of PEARL.`, '');
+
+  out.push('### What the same ticket is to an honest angler (100 honest anglers, prize 500 BLEND)', '');
+  out.push(`The ticket is the break-even one of the table above, ${num(even)} PEARL. “Worth” is the angler’s own share of the season’s chance times the prize, in PEARL at the exchange’s rate. An ordinary cast at the Village Pond with the free rod brings ${pond.toFixed(1)} PEARL, and a wallet’s energy ${num(dayPearl)} PEARL a day there.`, '');
+  out.push('| Angler | Own share of the season’s chance | Worth of that share | Ticket | Ticket ÷ worth | Ticket in pond casts |', '|---|---|---|---|---|---|');
+  for (const a of ANGLERS) {
+    const share = anglerShare(RECOMMENDED, 100, a);
+    const worth = shareWorth(share, 500);
+    out.push(`| ${a.name} | ${pct(share, 2)} | ${num(worth)} PEARL | ${num(even)} PEARL | ×${(even / worth).toFixed(1)} | ${num(even / pond)} |`);
+  }
+  out.push('');
+
+  out.push('### A ticket earned, not bought', '');
+  out.push(`PEARL is also earned by fishing, and energy is free. A wallet that fishes the pond with all its energy and sells every fish earns about ${num(dayPearl)} PEARL a day, ${num(dayPearl * 7)} a week. This is what a ticket costs such a wallet in its own time, every season:`, '');
+  out.push('| Ticket | Pond casts to earn it | Days of a wallet’s energy | BLEND, if bought instead |', '|---|---|---|---|');
+  for (const t of [100, 250, 500, 1000, 2500, 5000]) out.push(`| ${num(t)} PEARL | ${num(t / pond)} | ${(t / dayPearl).toFixed(1)} | ${(t / PEARL_PER_BLEND).toFixed(1)} |`);
+  out.push('');
+
   // sanity: the numbers the report leans on
+  expect(bestPack(RECOMMENDED, 100, 500, even, 10_000).net).toBeLessThanOrEqual(0.01);
+  expect(bestPack(RECOMMENDED, 100, 500, even / 4, 10_000).net).toBeGreaterThan(0);
+  expect(pond).toBeGreaterThan(10);
   expect(calibrate(RECOMMENDED, 1000)).toBeGreaterThan(0);
   expect(calibrate(RECOMMENDED, 1000) * 3).toBeLessThanOrEqual(CHANCE_UNIT / 10);
 

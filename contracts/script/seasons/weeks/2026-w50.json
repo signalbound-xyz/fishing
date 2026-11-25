@@ -7,7 +7,7 @@
   "start": "2026-12-07T00:00:00Z",
   "days": 7,
   "totalPrizeBlend": 1000,
-  "settleWindowSeconds": 3600,
+  "settleWindowSeconds": 21600,
   "hunts": [
     {
       "name": "The Gilded Guest",

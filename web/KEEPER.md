@@ -6,7 +6,7 @@ until the operator gives it both ("Switching it on").
 
 | | What is lost without it | What the keeper sends |
 |---|---|---|
-| Season Hunt | A seasonal cast that hooked the season's fish counts only once `SeasonHunt.settle` has recorded it, within the season's settle window (an hour in season 0). The player's page does that; a closed tab does not. | `settle(season, attempt, proof)` for every attempt that hit and can still take the catch |
+| Season Hunt | A seasonal cast that hooked the season's fish counts only once `SeasonHunt.settle` has recorded it, within the season's settle window (an hour in season 0, six hours in the season files since). The player's page does that; a closed tab does not. | `settle(season, attempt, proof)` for every attempt that hit and can still take the catch |
 | Ordinary casts | A cast is landed by `reel` for as long as the game can read the hash of its randomness block: 8,191 blocks on Fluent from release 004, 256 before it. After that the fish is gone. | `reelFor(player)` for every cast with fewer than `KEEPER_RESCUE_BLOCKS` left |
 | Still water | Rules that decide a catch may only change while no cast is in the water (`contracts/UPGRADES.md`, "Still water"). | with `--drain`: `reelFor` for every cast in the water |
 
@@ -66,7 +66,7 @@ Every call must carry `Authorization: Bearer <CRON_SECRET>`.
 
 | Status | Meaning |
 |---|---|
-| 200 | the pass's report: `hunt` (seasons, attempts, hits, settled, waiting, late, mismatches), `casts` (seen, reeled, expired, left, window), `water`, `operator` (address and balance), `failed`, `skipped`, `notes` |
+| 200 | the pass's report: `hunt` (seasons, attempts, hits, settled, waiting, late, mismatches), `casts` (seen, reeled, expired, left, window), `water`, `operator` (address and balance), `clock` (`lagSeconds`: real time minus the head block's timestamp; `marginSeconds`: the drand beacon's margin, or null when no season of a drand hunt is open), `failed`, `skipped`, `notes` |
 | 401 | no bearer token, or a wrong one |
 | 409 | a pass is already running on this instance |
 | 502 | a read of the chain failed: nothing was decided, the next pass starts over |
@@ -139,8 +139,10 @@ None of this is done. Each step is the operator's decision.
      ```
 
 **How often.** A hit must be recorded within the season's settle window after its cast, and a cast must be reeled
-in before its window ends. With an hour to settle and 900 blocks of rescue margin (about a quarter of an hour on
-Fluent), a pass every five minutes is enough and every minute is comfortable. A scheduler that can be half an hour
+in before its window ends. With an hour or more to settle and 900 blocks of rescue margin (about a quarter of an
+hour on Fluent), a pass every five minutes is enough and every minute is comfortable. With the six hours of the
+season files a keeper that was down for some hours still records the hits cast while it was away: it reads the
+hunt's log back for the whole window on every pass. A scheduler that can be half an hour
 late needs a larger `KEEPER_RESCUE_BLOCKS`.
 
 **Switching it off:** remove the schedule, or unset `CRON_SECRET`. Players lose nothing they had before the
@@ -159,10 +161,11 @@ It runs the same `api/keeper.js` and reads the same environment.
 
 ## Tests and rehearsals
 
-- `src/server/keeper.test.ts`, 39 tests against a fake chain: hits recorded lowest first, an earlier hit taking a
+- `src/server/keeper.test.ts`, 42 tests against a fake chain: hits recorded lowest first, an earlier hit taking a
   recorded catch over, attempts whose round does not exist yet, late ones, a disagreement with the contract, a
   hit recorded by someone else between the read and the send, casts rescued and drained, expired and uncounted
-  casts, the time budget, the endpoint's refusals, the configuration.
+  casts, the time budget, the clock against the beacon's margin (on time, half the margin, the margin, a clock
+  ahead, a hunt on block hashes), the endpoint's refusals, the configuration.
 - `src/game/release.test.ts`: the release is told from a real answer of the testnet's game, and the reel window
   is the long one only for a release that asks the history.
 - `src/game/hunt.test.ts` replays `src/game/fixtures/hunt.json`: 45 attempts (19 of them hits) decided by the
@@ -188,7 +191,12 @@ It runs the same `api/keeper.js` and reads the same environment.
 - **The public RPC.** The keeper reads logs and state through one RPC; when it fails the pass fails whole (502)
   and nothing is decided on partial data.
 - **The clock.** A drand round is chosen from the block's timestamp, as the contract does it, and the margin the
-  contract adds covers the timestamp lag measured so far (`SEASON_HUNT.md`, "Randomness"). An attempt with fewer
+  contract adds covers the timestamp lag measured so far (`SEASON_HUNT.md`, "Randomness"). Every pass measures
+  that lag against its own clock and puts it in the report (`clock`). At half the margin it adds a note; at the
+  margin, with a season taking casts, the note starts with `DANGER`: a cast made then is decided by a round that
+  is already public. The keeper only reports. What to do is in `SEASON_HUNT.md`, "If the clock lags". The
+  measurement is as good as the keeper's own clock, and a chain that has stopped reads the same as one that
+  stamps late. An attempt with fewer
   than twenty seconds of its settle window left is counted as late and not sent: the transaction would not be
   mined in time.
 - **Tournament casts** are not the game's casts and the keeper does not reel them.

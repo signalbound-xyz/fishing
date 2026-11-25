@@ -21,7 +21,11 @@ contract GameLens {
     uint256 internal constant ACHIEVEMENTS_SLOT = 9; // Achievement[] _achievements
     uint256 internal constant BEST_CATCH_SLOT = 17; // mapping(address => Record) bestCatch
     uint256 internal constant BEST_AT_SLOT = 18; // mapping(address => mapping(uint256 => Record)) bestAt
+    uint256 internal constant DRY_SLOT = 16; // mapping(address => mapping(uint256 => uint16)) dryCatches
     uint256 internal constant WEEK_SLOT = 22; // mapping(uint256 => mapping(address => WeekEntry[])) _week
+    uint256 internal constant WEEK_TOTAL_SLOT = 23; // mapping(uint256 => mapping(address => uint32)) weekTotal
+    uint256 internal constant WEEK_PLAYERS_SLOT = 24; // mapping(uint256 => address[]) _weekPlayers
+    uint256 internal constant TROPHY_SLOT = 29; // mapping(uint256 => bool) isTrophy
 
     /// @dev Everything a client needs about one player, in one call.
     struct PlayerView {
@@ -56,6 +60,8 @@ contract GameLens {
         FishNFT.Species[] species;
         bool[] hidden;
     }
+
+    error OutOfRange();
 
     constructor(FishingGame game_) {
         game = game_;
@@ -112,7 +118,7 @@ contract GameLens {
         v.dry = new uint16[](n);
         v.specialsHeld = new uint256[](n);
         for (uint256 i; i < n; i++) {
-            v.dry[i] = game.dryCatches(who, i);
+            v.dry[i] = dryCatches(who, i);
             v.specialsHeld[i] = fishNft.heldOf(who, sp[i].speciesId);
         }
         n = game.locationCount();
@@ -143,14 +149,14 @@ contract GameLens {
         view
         returns (address[] memory anglers, uint32[] memory totals)
     {
-        uint256 count = game.weekPlayerCount(week);
+        uint256 count = weekPlayerCount(week);
         uint256 end = offset + limit > count ? count : offset + limit;
         uint256 n = end > offset ? end - offset : 0;
         anglers = new address[](n);
         totals = new uint32[](n);
         for (uint256 i; i < n; i++) {
-            anglers[i] = game.weekPlayer(week, offset + i);
-            totals[i] = game.weekTotal(week, anglers[i]);
+            anglers[i] = weekPlayer(week, offset + i);
+            totals[i] = weekTotal(week, anglers[i]);
         }
     }
 
@@ -161,7 +167,7 @@ contract GameLens {
         totals = new uint32[](weeks_);
         for (uint256 i; i < weeks_; i++) {
             ids[i] = current - i - 1;
-            totals[i] = game.weekTotal(ids[i], who);
+            totals[i] = weekTotal(ids[i], who);
         }
     }
 
@@ -220,6 +226,33 @@ contract GameLens {
                 at: uint40(w >> 72)
             });
         }
+    }
+
+    /// @notice Catches of `who` in a row without special fish `specialId` (the pity counter).
+    function dryCatches(address who, uint256 specialId) public view returns (uint16) {
+        return uint16(_word(_slot(specialId, _slot(uint160(who), DRY_SLOT))));
+    }
+
+    /// @notice The sum of the catches of `who` that count in a week's championship.
+    function weekTotal(uint256 week, address who) public view returns (uint32) {
+        return uint32(_word(_slot(uint160(who), _slot(week, WEEK_TOTAL_SLOT))));
+    }
+
+    /// @notice How many anglers landed a fish in a week.
+    function weekPlayerCount(uint256 week) public view returns (uint256) {
+        return _word(_slot(week, WEEK_PLAYERS_SLOT));
+    }
+
+    /// @notice The anglers of a week, in the order of their first catch. Reverts past the end, as an array does.
+    function weekPlayer(uint256 week, uint256 index) public view returns (address) {
+        uint256 slot = _slot(week, WEEK_PLAYERS_SLOT);
+        if (index >= _word(slot)) revert OutOfRange();
+        return address(uint160(_word(uint256(keccak256(abi.encode(slot))) + index)));
+    }
+
+    /// @notice Whether a fish is a season's trophy: the game does not buy those (`FishingGame.sellFish`).
+    function isTrophy(uint256 fishId) public view returns (bool) {
+        return _word(_slot(fishId, TROPHY_SLOT)) != 0;
     }
 
     function _record(uint256 w) internal pure returns (FishingGame.Record memory) {

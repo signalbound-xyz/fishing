@@ -7,7 +7,7 @@
   "rods": [],
   "minLevel": 0,
   "dailyAttempts": 20,
-  "settleWindowSeconds": 3600,
+  "settleWindowSeconds": 21600,
   "baseChance": 8000000,
   "maxBonus": 200,
   "prizeBlend": 1000,

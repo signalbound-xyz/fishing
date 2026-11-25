@@ -19,6 +19,11 @@
  * attempt. A hit found that way is still put to the contract (`outcome`) before anything is sent, and a
  * disagreement is reported, never acted on.
  *
+ * A pass also measures the one thing the hunt's fairness leans on outside the contracts: the chain's clock. The
+ * drand round of a seasonal cast is the first one a margin after the cast's block timestamp, so the outcome of a
+ * cast is unknown when it is made only while block timestamps are not further behind real time than that margin.
+ * The keeper reports the lag, and says so in words when it comes near the margin (`clock` in the report).
+ *
  * This module has no I/O of its own: the chain, the drand relays and the clock are passed in. The real ones are in
  * server/keeperChain.ts; the tests pass fakes.
  */
@@ -169,6 +174,15 @@ export interface KeeperReport {
   skipped: number;
   water: { paused: boolean; inWater: number } | null;
   operator: { address: Address; balance: string } | null;
+  clock: {
+    /**
+     * Real time minus the timestamp of the head block, in seconds, when the pass began. A second or two is the
+     * chain's block time and the node's delay; more is a chain that has stopped or that stamps its blocks late.
+     */
+    lagSeconds: number;
+    /** The margin of the hunt's drand beacon, seconds; null when no season of such a hunt is open. */
+    marginSeconds: number | null;
+  };
   /** What a person should look at. Never a secret. */
   notes: string[];
 }
@@ -184,6 +198,8 @@ const SLACK = 64n;
 /** Under this balance the report says so (0.002 ETH: a few hundred transactions on Fluent). */
 const LOW_BALANCE_WEI = 2_000_000_000_000_000n;
 const MAX_MISSES = 50_000;
+/** The clock is spoken of once its lag is this fraction of the beacon's margin: a half. */
+const CLOCK_WARN_PARTS = 2;
 
 const max = (a: bigint, b: bigint): bigint => (a > b ? a : b);
 const min = (a: bigint, b: bigint): bigint => (a < b ? a : b);
@@ -211,6 +227,7 @@ export async function runKeeper(k: Keeper, opts: RunOptions = {}): Promise<Keepe
     skipped: 0,
     water: null,
     operator: null,
+    clock: { lagSeconds: Math.round(k.now() / 1000 - head.timestamp), marginSeconds: null },
     notes: [],
   };
 
@@ -250,6 +267,7 @@ async function settleHits(k: Keeper, hunt: HuntChain, head: Head, opts: RunOptio
   const seasons = (await hunt.seasons()).filter((s) => s.funded && !s.cancelled && head.timestamp >= s.start && head.timestamp <= s.end + s.settleWindow);
   if (seasons.length === 0) return;
   const beacon = await hunt.beacon();
+  if (beacon.drand) clockNote(beacon.drand.margin, seasons.some((s) => head.timestamp < s.end && !s.hooked), report);
   const reader = { head: () => k.chain.head(), timestamp: (b: bigint) => k.chain.timestamp(b), events: async () => [] };
 
   for (const season of seasons) {
@@ -340,6 +358,22 @@ async function settleHits(k: Keeper, hunt: HuntChain, head: Head, opts: RunOptio
       break; // with this one recorded, no later attempt can win
     }
   }
+}
+
+/**
+ * The chain's clock against the beacon's margin. A cast stamped `t` is decided by the first drand round at or
+ * after `t + margin`. That round is in the future when the cast is made only if the stamp is less than `margin`
+ * behind real time; a block stamped later than that takes casts whose outcome can be worked out before they are
+ * sent. Nothing here can stop that: the note tells the operator, who can (SEASON_HUNT.md, "If the clock lags").
+ */
+function clockNote(margin: number, takingCasts: boolean, report: KeeperReport): void {
+  report.clock.marginSeconds = margin;
+  const lag = report.clock.lagSeconds;
+  if (lag * CLOCK_WARN_PARTS < margin) return;
+  const what = `the chain's clock is ${lag} s behind real time and the beacon's margin is ${margin} s`;
+  if (lag < margin) report.notes.push(`${what}: seasonal casts are still decided by rounds that do not exist yet, with ${margin - lag} s to spare. Watch it`);
+  else if (takingCasts) report.notes.push(`DANGER: ${what}: a seasonal cast made now is decided by a drand round that is already public. Call the running season off or pause casting until blocks are on time again`);
+  else report.notes.push(`${what}: no season is taking casts now, and none should start while it is so`);
 }
 
 function remember(k: Keeper, key: string): void {

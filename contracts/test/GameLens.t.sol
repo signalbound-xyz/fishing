@@ -31,6 +31,22 @@ contract FishingGameProbe is FishingGame {
     function weekOf(uint256 week, address who) external view returns (WeekEntry[] memory) {
         return _week[week][who];
     }
+
+    function weekTotalOf(uint256 week, address who) external view returns (uint32) {
+        return weekTotal[week][who];
+    }
+
+    function weekPlayersOf(uint256 week) external view returns (address[] memory) {
+        return _weekPlayers[week];
+    }
+
+    function dryOf(address who, uint256 specialId) external view returns (uint16) {
+        return dryCatches[who][specialId];
+    }
+
+    function trophy(uint256 fishId) external view returns (bool) {
+        return isTrophy[fishId];
+    }
 }
 
 /// @notice The lens reads a special fish, an achievement, a player's records and weekly catches from the game's
@@ -122,6 +138,55 @@ contract GameLensTest is BaseTest {
         assertGt(lens.bestCatch(alice).weight, 0);
         assertGt(lens.bestCatch(alice).at, 0);
         assertEq(lens.bestCatch(who[2]).weight, 0);
+    }
+
+    function test_weekBoardsAndPityCountersAreWhatTheGameHolds() public {
+        uint256 firstWeek = game.currentWeek();
+        for (uint256 i; i < 30; i++) {
+            _catch(alice, 0, i);
+            if (i % 4 == 0) _catch(bob, 0, 2_000 + i);
+            if (i % 10 == 9) vm.warp(vm.getBlockTimestamp() + 1 weeks);
+        }
+        uint256 lastWeek = game.currentWeek();
+        address[3] memory who = [alice, bob, makeAddr("nobody")];
+        uint256 specials = game.specialCount();
+        bool dry;
+        for (uint256 w = firstWeek; w <= lastWeek + 1; w++) {
+            address[] memory anglers = probe.weekPlayersOf(w);
+            assertEq(lens.weekPlayerCount(w), anglers.length, "the anglers of a week");
+            for (uint256 i; i < anglers.length; i++) assertEq(lens.weekPlayer(w, i), anglers[i], "an angler of a week");
+            vm.expectRevert(GameLens.OutOfRange.selector);
+            lens.weekPlayer(w, anglers.length);
+            (address[] memory page, uint32[] memory totals) = lens.weekStandings(w, 0, 10);
+            _eq(abi.encode(page), abi.encode(anglers), "the standings' anglers");
+            for (uint256 k; k < who.length; k++) {
+                assertEq(lens.weekTotal(w, who[k]), probe.weekTotalOf(w, who[k]), "a week's total");
+            }
+            for (uint256 i; i < page.length; i++) assertEq(totals[i], probe.weekTotalOf(w, page[i]), "the standings' totals");
+        }
+        assertEq(lens.weekPlayerCount(firstWeek), 2);
+        assertGt(lens.weekTotal(firstWeek, alice), 0);
+        for (uint256 k; k < who.length; k++) {
+            GameLens.PlayerView memory v = lens.playerView(who[k]);
+            for (uint256 i; i < specials; i++) {
+                assertEq(lens.dryCatches(who[k], i), probe.dryOf(who[k], i), "a pity counter");
+                assertEq(v.dry[i], probe.dryOf(who[k], i), "the view's pity counter");
+                if (probe.dryOf(who[k], i) != 0) dry = true;
+            }
+        }
+        assertTrue(dry, "no pity counter moved: the test compares nothing");
+    }
+
+    function test_aTrophyIsWhatTheGameMarked() public {
+        vm.prank(owner);
+        game.setSeasonHunt(address(this));
+        uint256 ordinary = _catch(alice, 0, 1);
+        uint256 id = fish.nextId();
+        game.landFor(alice, FishNFT.Fish(9, 9_000, 1, 2, uint40(block.timestamp), alice));
+        assertTrue(probe.trophy(id));
+        assertTrue(lens.isTrophy(id));
+        assertFalse(lens.isTrophy(ordinary));
+        assertFalse(lens.isTrophy(id + 1));
     }
 
     function test_theViewSaysWhenCastingIsPaused() public {

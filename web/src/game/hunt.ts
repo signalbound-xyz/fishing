@@ -120,6 +120,12 @@ export interface HuntSeason {
   trophyId: bigint;
   /** Seasonal casts the connected player has left today. */
   attemptsLeft: number;
+  /** Whole PEARL a wallet burns once to fish this season; 0: the season is free. */
+  ticket: number;
+  /** The same price as the contract holds it, in PEARL wei. */
+  ticketWei: bigint;
+  /** The connected player holds this season's ticket. Always false in a free season. */
+  hasTicket: boolean;
 }
 
 // ------------------------------------------------------------------ the draw of an attempt
@@ -212,4 +218,28 @@ export function countdown(seconds: number): string {
   if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
   if (m > 0) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
   return `${s}s`;
+}
+
+// ------------------------------------------------------------------ reading a hunt's log back
+
+/** Blocks in one `eth_getLogs` query when the hunt's log is read back for a player's earlier casts. */
+export const LOG_CHUNK = 10_000;
+/** The furthest back that reading goes, in blocks: a little over a day at a block a second. */
+export const LOG_REACH = 100_000;
+
+/**
+ * The block ranges that cover the last `back` blocks up to `head`, newest first, each of at most `chunk` blocks
+ * and none of them overlapping. `back` is cut to `LOG_REACH`: a window longer than that is followed by the keeper
+ * (web/KEEPER.md), not by a browser.
+ */
+export function logRanges(head: bigint, back: number, chunk = LOG_CHUNK): [from: bigint, to: bigint][] {
+  const reach = BigInt(Math.max(0, Math.min(Math.floor(back), LOG_REACH)));
+  const first = head > reach ? head - reach : 0n;
+  const out: [bigint, bigint][] = [];
+  for (let to = head; to >= first; to -= BigInt(chunk)) {
+    const from = to - BigInt(chunk) + 1n > first ? to - BigInt(chunk) + 1n : first;
+    out.push([from, to]);
+    if (from === first) break;
+  }
+  return out;
 }

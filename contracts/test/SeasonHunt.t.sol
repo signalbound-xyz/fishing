@@ -1038,6 +1038,46 @@ contract SeasonHuntTest is HuntBase {
         hunt.mintTrophy(id);
     }
 
+    /// @dev The game buys every fish a cast paid for, and not the trophy: selling it would mint PEARL for a catch
+    ///      nobody cast for. It stays an ordinary token otherwise: it can be given away, and it is still not for
+    ///      sale to the game in the new owner's hands, alone or among other fish.
+    function test_the_game_does_not_buy_a_trophy() public {
+        uint256 id = _open();
+        _hook(id, alice);
+        _pastWindow();
+        vm.prank(alice);
+        hunt.claim(id);
+        uint256 trophy = hunt.season(id).trophyId;
+        uint256 ordinary = _catch(alice, 0, 77);
+        uint256 supply = pearl.totalSupply();
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = trophy;
+        vm.prank(alice);
+        vm.expectRevert(FishingGame.TrophyNotForSale.selector);
+        game.sellFish(ids);
+
+        uint256[] memory both = new uint256[](2);
+        (both[0], both[1]) = (ordinary, trophy);
+        vm.prank(alice);
+        vm.expectRevert(FishingGame.TrophyNotForSale.selector);
+        game.sellFish(both);
+        assertEq(fish.ownerOf(ordinary), alice, "nothing of a refused sale happened");
+        assertEq(pearl.totalSupply(), supply, "no PEARL was minted");
+
+        vm.prank(alice);
+        fish.transferFrom(alice, bob, trophy);
+        vm.prank(bob);
+        vm.expectRevert(FishingGame.TrophyNotForSale.selector);
+        game.sellFish(ids);
+        assertEq(fish.ownerOf(trophy), bob);
+
+        // the ordinary fish sells as always
+        ids[0] = ordinary;
+        vm.prank(alice);
+        assertGt(game.sellFish(ids), 0);
+    }
+
     function test_the_trophy_can_be_minted_by_anyone_once_the_result_stands() public {
         uint256 id = _open();
         _hook(id, alice);

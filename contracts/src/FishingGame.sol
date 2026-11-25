@@ -177,7 +177,7 @@ contract FishingGame is Ownable {
     mapping(address => mapping(uint256 => uint16)) public rodDurability;
     mapping(address => mapping(uint256 => uint32)) public lureCasts;
     mapping(address => mapping(uint256 => DexEntry)) public dex;
-    mapping(address => mapping(uint256 => uint16)) public dryCatches;
+    mapping(address => mapping(uint256 => uint16)) internal dryCatches;
     mapping(address => Record) internal bestCatch;
     mapping(address => mapping(uint256 => Record)) internal bestAt;
     mapping(address => uint256) public blendWon;
@@ -185,7 +185,7 @@ contract FishingGame is Ownable {
     mapping(uint256 => uint256) public mintedOnDay;
 
     mapping(uint256 => mapping(address => WeekEntry[])) internal _week;
-    mapping(uint256 => mapping(address => uint32)) public weekTotal;
+    mapping(uint256 => mapping(address => uint32)) internal weekTotal;
     mapping(uint256 => address[]) internal _weekPlayers;
 
     uint256 public totalCasts;
@@ -206,6 +206,10 @@ contract FishingGame is Ownable {
     /// @notice While set, nobody can cast. Casts already in the water are reeled in as always, which is how the
     ///         water becomes still before a change of rules or a new version of this code.
     bool public castingPaused;
+
+    /// @notice Season trophies (fish minted by `landFor`). A trophy is kept, shown, listed or given away like any
+    ///         fish, but the game does not buy it: selling one would mint PEARL for a catch no cast paid for.
+    mapping(uint256 => bool) internal isTrophy;
 
     // ------------------------------------------------------------------ errors & events
 
@@ -232,6 +236,7 @@ contract FishingGame is Ownable {
     error BadConfig();
     error CastingPaused();
     error WaterNotStill();
+    error TrophyNotForSale();
 
     event Casted(address indexed player, uint8 locationId, uint8 rod, uint8 lure, uint64 targetBlock);
     event Caught(
@@ -687,7 +692,7 @@ contract FishingGame is Ownable {
     ///         the fish contract takes no other minter.
     function landFor(address player, FishNFT.Fish calldata f) external {
         _onlyHunt();
-        fishNft.mint(player, f);
+        isTrophy[fishNft.mint(player, f)] = true;
     }
 
     function _onlyHunt() internal view {
@@ -900,14 +905,6 @@ contract FishingGame is Ownable {
         emit WeekScore(week, player, total);
     }
 
-    function weekPlayerCount(uint256 week) external view returns (uint256) {
-        return _weekPlayers[week].length;
-    }
-
-    function weekPlayer(uint256 week, uint256 index) external view returns (address) {
-        return _weekPlayers[week][index];
-    }
-
     // ------------------------------------------------------------------ selling fish to the game
 
     /// @notice price = basePrice × weight factor (0.4–3 of the species mean) × quality factor.
@@ -960,6 +957,7 @@ contract FishingGame is Ownable {
         for (uint256 i; i < fishIds.length; i++) {
             uint256 id = fishIds[i];
             if (fishNft.ownerOf(id) != msg.sender) revert NotFishOwner();
+            if (isTrophy[id]) revert TrophyNotForSale();
             uint256 payout = _applyCap(_saleValue(id, msg.sender), minted);
             fishNft.burn(id);
             minted += payout;

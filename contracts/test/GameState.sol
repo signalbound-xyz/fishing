@@ -19,7 +19,10 @@ abstract contract GameStateReader is Test {
     uint256 internal constant ACHIEVEMENTS_SLOT = 9;
     uint256 internal constant BEST_CATCH_SLOT = 17;
     uint256 internal constant BEST_AT_SLOT = 18;
+    uint256 internal constant DRY_SLOT = 16;
     uint256 internal constant WEEK_SLOT = 22;
+    uint256 internal constant WEEK_TOTAL_SLOT = 23;
+    uint256 internal constant WEEK_PLAYERS_SLOT = 24;
 
     /// @dev `castOf`. Releases up to 003 answer with six fields, later ones with seven (`counted`): the missing
     ///      one reads as false.
@@ -41,10 +44,26 @@ abstract contract GameStateReader is Test {
         for (uint256 i; i < words.length; i++) words[i] = vm.load(address(g), bytes32(first + i));
     }
 
+    /// @dev A player's weekly total, the pity counter of a special fish and the anglers of a week: getters of the
+    ///      game up to release 004, words of its storage since.
+    function _weekTotalOf(FishingGame g, uint256 week, address who) internal view returns (uint32) {
+        return uint32(uint256(vm.load(address(g), bytes32(_mapSlot(uint160(who), _mapSlot(week, WEEK_TOTAL_SLOT))))));
+    }
+
+    function _dryOf(FishingGame g, address who, uint256 specialId) internal view returns (uint16) {
+        return uint16(uint256(vm.load(address(g), bytes32(_mapSlot(specialId, _mapSlot(uint160(who), DRY_SLOT))))));
+    }
+
+    function _weekPlayersOf(FishingGame g, uint256 week) internal view returns (address[] memory list) {
+        bytes32[] memory words = _arrayWords(g, _mapSlot(week, WEEK_PLAYERS_SLOT));
+        list = new address[](words.length);
+        for (uint256 i; i < words.length; i++) list[i] = address(uint160(uint256(words[i])));
+    }
+
     /// @dev A week of one player: the catches that count, as stored, and their total.
     function _weekState(FishingGame g, uint256 week, address who) internal view returns (bytes32) {
         return keccak256(
-            abi.encode(_arrayWords(g, _mapSlot(uint160(who), _mapSlot(week, WEEK_SLOT))), g.weekTotal(week, who))
+            abi.encode(_arrayWords(g, _mapSlot(uint160(who), _mapSlot(week, WEEK_SLOT))), _weekTotalOf(g, week, who))
         );
     }
 
@@ -70,7 +89,7 @@ abstract contract GameStateReader is Test {
         bytes32[] memory specials = _arrayWords(g, SPECIALS_SLOT);
         for (uint256 i; i < specials.length; i++) {
             // a special's species is the low 16 bits of its word
-            h = keccak256(abi.encode(h, g.dryCatches(who, i), nft.heldOf(who, uint16(uint256(specials[i])))));
+            h = keccak256(abi.encode(h, _dryOf(g, who, i), nft.heldOf(who, uint16(uint256(specials[i])))));
         }
         n = g.locationCount();
         for (uint256 i; i < n; i++) {

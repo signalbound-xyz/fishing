@@ -499,6 +499,53 @@ describe('a pass', () => {
     expect(r.notes.join(' ')).toContain('balance is low');
   });
 
+  it('measures the chain’s clock against the beacon’s margin, and is quiet while it is on time', async () => {
+    const w = world();
+    w.season();
+    w.st.clock = 2; // a block old, as a healthy chain is
+    const r = await w.run();
+    expect(r.clock).toEqual({ lagSeconds: 2, marginSeconds: 30 });
+    expect(r.notes).toEqual([]);
+  });
+
+  it('says so when the clock is half the margin behind, and louder when a cast could be decided by a known round', async () => {
+    const w = world();
+    const s = w.season();
+    w.st.clock = 15;
+    let r = await w.run();
+    expect(r.clock.lagSeconds).toBe(15);
+    expect(r.notes.join(' ')).toMatch(/15 s behind real time and the beacon's margin is 30 s: .* with 15 s to spare/);
+    expect(r.notes.join(' ')).not.toContain('DANGER');
+
+    w.st.clock = 30;
+    r = await w.run();
+    expect(r.notes.join(' ')).toMatch(/DANGER: the chain's clock is 30 s behind real time .* already public/);
+
+    // a season that is only waiting for late hits takes no casts: the lag is reported without the alarm
+    s.end = T0 + Number(w.st.head) - 60;
+    r = await w.run();
+    expect(r.notes.join(' ')).toContain('no season is taking casts now');
+    expect(r.notes.join(' ')).not.toContain('DANGER');
+  });
+
+  it('a clock that runs ahead, a hunt on block hashes and a hunt with nothing open raise no alarm', async () => {
+    const ahead = world();
+    ahead.season();
+    ahead.st.clock = -40;
+    expect((await ahead.run()).notes).toEqual([]);
+
+    const hashes = world({ scheme: 'blockhash' });
+    hashes.season();
+    hashes.st.clock = 600;
+    const r = await hashes.run();
+    expect(r.clock).toEqual({ lagSeconds: 600, marginSeconds: null });
+    expect(r.notes).toEqual([]);
+
+    const idle = world();
+    idle.st.clock = 600;
+    expect((await idle.run()).clock).toEqual({ lagSeconds: 600, marginSeconds: null });
+  });
+
   it('works with a game that does not count its casts, and with no hunt', async () => {
     const w = world({ counts: false });
     w.k.chain.hunt = null;

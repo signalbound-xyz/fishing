@@ -77,8 +77,8 @@ contract UpgradeForkTest is GameStateReader {
         }
         uint256 week = game.currentWeek();
         for (uint256 w = week > WEEKS_BACK ? week - WEEKS_BACK : 0; w <= week; w++) {
-            uint256 m = game.weekPlayerCount(w);
-            for (uint256 i; i < m; i++) _know(game.weekPlayer(w, i));
+            address[] memory anglers = _weekPlayersOf(game, w);
+            for (uint256 i; i < anglers.length; i++) _know(anglers[i]);
         }
         uint256 t = cup.count();
         for (uint256 id; id < t; id++) {

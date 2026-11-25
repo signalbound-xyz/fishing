@@ -464,6 +464,43 @@ The procedure above. For the first upgrade to 004, step 3 is the drain alone (re
 is not needed (the new game starts with casting open). Step 8 is: the live page cannot read the game until the
 new client is out.
 
+## Release 005 (in the source, not deployed): trophies are not sold, four more views in the lens
+
+**Nothing of this is on a network.** It is what `main` holds beyond release 004, and it goes out by the procedure
+above, with the owner's go-ahead.
+
+```solidity
+mapping(uint256 => bool) internal isTrophy;  // appended after castingPaused: slot 29
+error TrophyNotForSale();
+// landFor:  isTrophy[fishNft.mint(player, f)] = true;
+// sellFish: if (isTrophy[id]) revert TrophyNotForSale();
+// gone from the game, offered by GameLens under the same names:
+//   dryCatches(player, specialId), weekTotal(week, player), weekPlayerCount(week), weekPlayer(week, index)
+```
+
+- **Why.** A season trophy is minted by `landFor`, with no cast behind it, and `sellFish` paid the ordinary PEARL
+  price for it: PEARL from nothing, once per won season. Now the game does not buy a fish that `landFor` minted.
+  It can still be kept, listed on the market, transferred or shown. 52 bytes.
+- **Room.** The two public getters `dryCatches` and `weekTotal` and the two functions `weekPlayerCount` and
+  `weekPlayer` were used by the lens and the tests only. They are read through `extsload` now (`dryCatches` slot
+  16, `weekTotal` 23, `_weekPlayers` 24, `isTrophy` 29), as release 004 did for five others. The game is 23,587
+  bytes with 989 free, where 004 has 721: paid location unlocks (838 bytes) fit again.
+- **Layout.** `check-layout.sh`: ok against release 004, 1 state variable appended. `validate-upgrade.sh` passes.
+  A mapping takes one slot of its own and writes nothing at the upgrade.
+- **The lens.** As in 004, the released lens stops working at the upgrade (it calls the four views that are gone)
+  and the new lens does not work before it: the script ships the lens with the game and the client follows at
+  once. `test/GameLens.t.sol` compares the four reads and `isTrophy` with the compiler's own getters on the same
+  storage. `GameLens.weekPlayer` reverts with `OutOfRange` past the end of the list, as the game's did.
+- **Who calls the removed views.** Nothing on the chain: the released `SeasonHunt`, `Tournaments`, `DailyRewards`
+  and `Marketplace` call none of them. The web client reads none of them from the game. An indexer or script
+  outside this repository that reads `weekTotal` or `dryCatches` from the game's address must move to the lens.
+- **Fish minted before the upgrade** are not marked. A trophy that exists already stays sellable.
+- **Not run from here:** `./preflight.sh fluent_testnet` (the releases against the chain and the fork rehearsal).
+  The offline preflight passes. Run the full one before the upgrade.
+
+`SeasonHunt` with tickets is a separate, plain contract and no part of this release: SEASON_HUNT.md, "What is in
+the source and not on the chain".
+
 ## Contract size
 
 **Fluent enforces EIP-170.** Checked on Fluent Testnet by simulating a contract creation (`eth_estimateGas`, no
@@ -476,16 +513,18 @@ transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `Cre
 | release 002, on Fluent Testnet on 24 November 2026: the above plus the daily reward hook | 23,688 | 888 |
 | release 003, on Fluent Testnet until 25 November 2026: the above plus the Season Hunt hook | 24,293 | 283 |
 | release 004, on Fluent Testnet now: still water and the long window (565 bytes), five views moved to the lens | 23,855 | 721 |
+| release 005, in the source and not deployed: trophies are not sold (52 bytes), four more views moved to the lens | 23,587 | 989 |
 
-`DailyRewards`, the plain contract that goes with the daily reward hook, is 3,802 bytes; `SeasonHunt` is 15,455 and
-`DrandBeacon` 4,158. See "The daily reward" and "Season Hunt" above.
+`DailyRewards`, the plain contract that goes with the daily reward hook, is 3,802 bytes; `SeasonHunt` is 15,455 as
+deployed and 19,362 in the source, with tickets; `DrandBeacon` is 4,158. See "The daily reward" and "Season Hunt"
+above.
 
-**283 bytes is all that is left on the chain, 721 in the source.** `GameLens`, a plain contract, is 13,951 bytes
+**721 bytes are left on the chain, 989 in the source.** `GameLens`, a plain contract, is 13,951 bytes
 in release 004. The Season Hunt hook was first written to land the trophy through the game's own
 catch code (dex, XP, the `Caught` event): 2,078 bytes, which did not fit. What is in the source mints the fish and
 nothing else. The next feature that needs code in `FishingGame` needs one of the options under "What 1,236 bytes
-buy" first; paid location unlocks (838 bytes) no longer fit beside the hunt. Release 004 took the first part of
-option A to make room for itself and leaves 721.
+buy" first. Release 004 took the first part of option A to make room for itself and left 721; release 005 takes
+four more views and leaves 989, so paid location unlocks (838 bytes) fit again, with 151 to spare.
 
 ### What was optimized
 

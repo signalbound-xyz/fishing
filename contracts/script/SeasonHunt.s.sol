@@ -136,10 +136,13 @@ contract SeasonHuntScript is Script {
         SeasonHunt.Rules memory r = rules(vm.envString("SEASON"), vm.envUint("START"), IERC20Metadata(address(hunt.blend())).decimals());
         require(r.start >= block.timestamp + 10 minutes, "START is less than ten minutes away: the prize must be in before it");
         require(r.start <= block.timestamp + 60 days, "START is more than 60 days away: it is unix time, in seconds");
+        uint96 ticket = ticketOf(vm.envString("SEASON"));
+        if (ticket != 0) require(_sellsTickets(hunt), "this hunt sells no tickets: the season file asks for one (ticketPearl)");
         vm.startBroadcast();
-        id = hunt.create(r);
+        id = ticket == 0 ? hunt.create(r) : hunt.createTicketed(r, ticket);
         vm.stopBroadcast();
         console2.log("season              ", id);
+        console2.log("ticket, PEARL wei   ", ticket);
         console2.log("name                ", r.name);
         console2.log("starts              ", r.start);
         console2.log("ends                ", r.end);
@@ -230,7 +233,8 @@ contract SeasonHuntScript is Script {
         uint256 end;
         uint256 total; // BLEND of the three hunts together, in the token's units
         SeasonHunt.Rules[] rules;
-        bool[] exists; // the chain has a season with exactly these rules
+        uint96[] tickets; // what each hunt asks of every wallet, in PEARL wei; zero: free
+        bool[] exists; // the chain has a season with exactly these rules and this ticket
         uint256[] ids; // its id, when it exists
     }
 
@@ -328,9 +332,10 @@ contract SeasonHuntScript is Script {
             require(r.rods >> rods == 0, string.concat(at, "a rod that is not in the game"));
             require(r.settleWindow > delay, string.concat(at, "the settle window is not longer than the beacon's delay"));
             bytes32 want = keccak256(abi.encode(r));
+            require(w.tickets[i] == 0 || _sellsTickets(hunt), string.concat(at, "asks for a ticket, and this hunt sells none"));
             for (uint256 id; id < n; id++) {
                 SeasonHunt.Season memory s = hunt.season(id);
-                if (!s.cancelled && keccak256(abi.encode(s.rules)) == want) {
+                if (!s.cancelled && keccak256(abi.encode(s.rules)) == want && _ticketOn(hunt, id) == w.tickets[i]) {
                     require(!w.exists[i], string.concat(at, "the chain has it twice"));
                     (w.exists[i], w.ids[i]) = (true, id);
                 }
@@ -370,6 +375,7 @@ contract SeasonHuntScript is Script {
         require(vm.keyExistsJson(json, ".hunts[2]") && !vm.keyExistsJson(json, ".hunts[3]"), "a week is exactly three hunts");
 
         w.rules = new SeasonHunt.Rules[](HUNTS_PER_WEEK);
+        w.tickets = new uint96[](HUNTS_PER_WEEK);
         w.exists = new bool[](HUNTS_PER_WEEK);
         w.ids = new uint256[](HUNTS_PER_WEEK);
         uint256 shares;
@@ -386,6 +392,7 @@ contract SeasonHuntScript is Script {
             require(share != 0 && share <= 100, string.concat(at, "prizeShare must be 1 to 100"));
             shares += share;
             SeasonHunt.Rules memory r = _rulesAt(json, k);
+            w.tickets[i] = _ticketAt(json, k);
             r.start = uint40(w.start + vm.parseJsonUint(json, string.concat(k, ".startHour")) * 1 hours);
             r.end = uint40(r.start + vm.parseJsonUint(json, string.concat(k, ".durationHours")) * 1 hours);
             r.settleWindow = uint32(settle);
@@ -416,7 +423,7 @@ contract SeasonHuntScript is Script {
             string memory at = string.concat("hunt ", vm.toString(i + 1), ": ");
             require(r.start >= block.timestamp + 10 minutes, string.concat(at, "starts in less than ten minutes: the prize must be in before it"));
             require(r.start <= block.timestamp + 60 days, string.concat(at, "starts more than 60 days from now"));
-            (w.exists[i], w.ids[i]) = (true, hunt.create(r));
+            (w.exists[i], w.ids[i]) = (true, w.tickets[i] == 0 ? hunt.create(r) : hunt.createTicketed(r, w.tickets[i]));
         }
     }
 
@@ -466,6 +473,7 @@ contract SeasonHuntScript is Script {
             console2.log("  hunt", i + 1, r.name);
             console2.log("    from", r.start, "to", r.end);
             console2.log("    prize, wei", r.prize);
+            if (w.tickets[i] != 0) console2.log("    ticket, PEARL wei", w.tickets[i]);
             if (!w.exists[i]) {
                 console2.log("    not on the chain yet");
                 due += r.prize;
@@ -547,6 +555,32 @@ contract SeasonHuntScript is Script {
         r.rodBonus = _row(vm.parseJsonUintArray(json, ".rodBonus"));
         r.lureBonus = _row(vm.parseJsonUintArray(json, ".lureBonus"));
         r.waterBonus = _row(vm.parseJsonUintArray(json, ".waterBonus"));
+    }
+
+    /// @notice The ticket a season file asks of every wallet, in PEARL wei: its `ticketPearl` (whole PEARL), or
+    ///         nothing when the file has no such line.
+    function ticketOf(string memory name) public view returns (uint96) {
+        return _ticketAt(vm.readFile(string.concat(vm.projectRoot(), "/script/seasons/", name, ".json")), "");
+    }
+
+    /// @dev `ticketPearl` under `k`, in PEARL wei (18 decimals). A file without the line is a free season.
+    function _ticketAt(string memory json, string memory k) internal view returns (uint96) {
+        string memory key = string.concat(k, ".ticketPearl");
+        if (!vm.keyExistsJson(json, key)) return 0;
+        uint256 whole = vm.parseJsonUint(json, key);
+        require(whole <= 1e9, "ticketPearl is in whole PEARL");
+        return uint96(whole * 1e18);
+    }
+
+    /// @dev Whether `hunt` is a version that knows tickets. The first release of the hunt does not.
+    function _sellsTickets(SeasonHunt hunt) internal view returns (bool ok) {
+        (ok,) = address(hunt).staticcall(abi.encodeWithSelector(hunt.ticketPrice.selector, 0));
+    }
+
+    /// @dev The ticket of season `id` on the chain; nothing on a hunt that knows no tickets.
+    function _ticketOn(SeasonHunt hunt, uint256 id) internal view returns (uint96 price) {
+        (bool ok, bytes memory ret) = address(hunt).staticcall(abi.encodeWithSelector(hunt.ticketPrice.selector, id));
+        if (ok && ret.length == 32) price = abi.decode(ret, (uint96));
     }
 
     function _mask(uint256[] memory ids) internal pure returns (uint16 mask) {

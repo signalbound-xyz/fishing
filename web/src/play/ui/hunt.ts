@@ -23,8 +23,8 @@ import { emit, state } from '../../store';
 import { LURES, RODS } from '../../tackle/catalog';
 import { h, mount, shortAddr, sigOf } from '../../ui/dom';
 import { fishArt } from '../fishSprite';
-import { HUNT_DEMO, HUNT_DEPLOYED, activeHunt, armHunt, huntBlocker, huntCastFor, huntNow, huntOps, hunts, isFinal, loadHunts, myChance, myHits, myWaiting, showMoreHunts, statusNow, syncHunt, tackleOf, weekNow, weeksNow, type HuntSeason, type PendingAttempt } from '../hunt';
-import { CHAIN, ops } from '../ops';
+import { HUNT_DEMO, HUNT_DEPLOYED, activeHunt, armHunt, huntBlocker, huntCastFor, huntNow, huntOps, hunts, isFinal, loadHunts, myChance, myHits, myWaiting, needsTicket, showMoreHunts, statusNow, syncHunt, tackleOf, ticketBlocker, ticketText, weekNow, weeksNow, type HuntSeason, type PendingAttempt } from '../hunt';
+import { CHAIN, ops, refresh } from '../ops';
 import { getSave, rev } from '../state';
 import { rarityTag } from './fmt';
 
@@ -306,6 +306,7 @@ function overview(s: HuntSeason, x: Hunt, w: Week): HTMLElement {
   const entry: string[] = [];
   entry.push(s.rods.length ? `Rod: ${s.rods.map(rodName).join(' or ')}` : 'Any rod, the free Willow Rod included');
   if (s.minLevel > 1) entry.push(`Level ${s.minLevel} and up`);
+  if (s.ticket > 0) entry.push(s.hasTicket ? `Ticket: ${ticketText(s)}, yours already` : `Ticket: ${ticketText(s)}, once per wallet, burned`);
   entry.push(`${s.dailyAttempts} seasonal casts per day`);
 
   return h(
@@ -360,6 +361,22 @@ function overview(s: HuntSeason, x: Hunt, w: Week): HTMLElement {
   );
 }
 
+const TICKET_NOTE = 'One ticket per wallet for this hunt. The PEARL is burned: nobody receives it, and it is not returned, whoever wins.';
+
+/** Buys the season's ticket; the PEARL balance on the page follows. */
+function ticketButton(s: HuntSeason, save: Save, cls: string): HTMLElement {
+  const blocker = ticketBlocker(s, save);
+  const buying = hunts.busy === 'ticket';
+  return h('button', {
+    class: `${cls}${buying ? ' busy' : ''}`,
+    text: buying ? 'Buying the ticket…' : `Buy the ticket · ${ticketText(s)}`,
+    title: blocker ?? TICKET_NOTE,
+    disabled: !!blocker || !!hunts.busy,
+    attrs: { type: 'button' },
+    onclick: () => void huntOps.ticket(s).then((ok) => (ok ? refresh() : undefined)),
+  });
+}
+
 /** The one thing to do about the season right now. */
 function heroAction(s: HuntSeason, st: HuntStatus, save: Save): HTMLElement | null {
   if (st === 'upcoming') {
@@ -376,6 +393,7 @@ function heroAction(s: HuntSeason, st: HuntStatus, save: Save): HTMLElement | nu
   const best = openWaters.slice().sort((a, b) => myChance(s, save, b) - myChance(s, save, a))[0];
   const water = here ?? best;
   if (water === undefined) return h('div', { class: 'hunt-cta' }, h('span', { class: 'warn', text: 'You have not opened any of this season’s waters yet.' }));
+  if (needsTicket(s)) return h('div', { class: 'hunt-cta' }, ticketButton(s, save, 'btn btn-primary hunt-go'), h('span', { class: ticketBlocker(s, save) ? 'warn' : 'muted', text: ticketBlocker(s, save) ?? TICKET_NOTE }));
   const blocker = huntBlocker(s, save, water);
   const left = h('span', { class: s.attemptsLeft > 0 ? 'hunt-left' : 'hunt-left warn', text: `${s.attemptsLeft} of ${s.dailyAttempts} seasonal casts left today`, title: 'The count starts again at midnight UTC' });
   return h(
@@ -644,7 +662,7 @@ function archiveSection(weeks: Week[], shown: Week | null): HTMLElement {
 export function huntStripSig(): unknown {
   if (!CHAIN || !HUNT_DEPLOYED) return null;
   const s = activeHunt();
-  return [hunts.rev, s?.id, s ? statusNow(s) : null, hunts.armed, myWaiting().length, myHits().length];
+  return [hunts.rev, s?.id, s ? statusNow(s) : null, hunts.armed, myWaiting().length, myHits().length, s?.hasTicket, hunts.busy];
 }
 
 /** True when the next cast at the pond will count for the season: the Cast button says so. */
@@ -661,6 +679,8 @@ export function huntStrip(busy: boolean): HTMLElement | null {
   if (!s) return null;
   const save = getSave();
   const blocker = huntBlocker(s, save);
+  // a ticket is the one thing in the way that the player can deal with here
+  const ticket = needsTicket(s) && huntBlocker({ ...s, hasTicket: true }, save) === null;
   const on = hunts.armed && !blocker;
   const chance = myChance(s, save);
   const hits = myHits().filter((p) => p.season === s.id);
@@ -700,6 +720,7 @@ export function huntStrip(busy: boolean): HTMLElement | null {
       }),
     ),
     h('div', { class: blocker && hunts.armed ? 'hunt-strip-line warn' : 'hunt-strip-line', text: line }),
+    ticket ? h('div', { class: 'hunt-strip-hit' }, ticketButton(s, save, 'btn btn-primary btn-sm'), h('span', { class: 'muted small', text: 'once per wallet, burned' })) : null,
     status ? h('div', { class: `hunt-strip-last${last?.result === 'recorded' && waiting === 0 ? ' win' : ''}`, text: status }) : null,
     ...hits.map((p) =>
       h(

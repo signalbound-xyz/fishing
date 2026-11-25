@@ -7,13 +7,14 @@
  * read) once the cast's randomness exists; only a hit needs a second transaction (`settle`), and anybody may
  * send it. The order of the casts on the chain, not the order of these transactions, decides who wins.
  */
-import { formatEther, parseAbi, parseEventLogs, toEventSelector, pad, type AbiEvent, type Address, type Hex, type TransactionReceipt } from 'viem';
+import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, erc20Abi, formatEther, parseAbi, parseEventLogs, toEventSelector, pad, type AbiEvent, type Address, type Hex, type TransactionReceipt } from 'viem';
 import { seasonHuntAbi } from '../abi';
 import { publicClient } from '../clients';
 import { CHAIN_ID, deployment } from '../config';
-import { revertName } from '../errors';
+import { friendlyError, revertName } from '../errors';
+import { fluentSend } from '../fluent';
 import { SPECIES } from '../game/content';
-import { HUNT_STATUS, chanceOf, drandRound, drandTime, idsOf, levelOfXp, type DrandNet, type HuntAttempt, type HuntSeason, type HuntStatus } from '../game/hunt';
+import { HUNT_STATUS, chanceOf, drandRound, drandTime, idsOf, levelOfXp, logRanges, type DrandNet, type HuntAttempt, type HuntSeason, type HuntStatus } from '../game/hunt';
 import { currentWeek, finalAt, groupWeeks, statusAt, type WeekEntry, type WeekView } from '../game/week';
 import { weeks as weekRegistry } from '../generated/weeks';
 import type { Save } from '../game/types';
@@ -92,7 +93,7 @@ export const hunts = {
   armed: false,
   pending: [] as PendingAttempt[],
   last: null as LastAttempt | null,
-  /** A hunt transaction is on its way: 'claim', 'record', 'trophy' or 'reclaim'. */
+  /** A hunt transaction is on its way: 'claim', 'record', 'trophy', 'reclaim' or 'ticket'. */
   busy: null as string | null,
   /** Bumped on every change, for render signatures. */
   rev: 0,
@@ -186,6 +187,31 @@ function readBeacon(): Promise<void> {
 
 const lureOf = (recorded: number): number | null => (recorded === 0 ? null : recorded - 1);
 
+/**
+ * False once the hunt has answered that it has no tickets: the first release of the contract, where every season
+ * is free. Null until it was asked.
+ */
+let sellsTickets: boolean | null = null;
+
+/**
+ * The ticket of each season in `ids` for `me`: its price and whether `me` holds it. A hunt without tickets is
+ * asked once and then left alone. A read that fails for another reason leaves the seasons as they were read last
+ * (free, the first time): a cast without a ticket is refused by the contract, in words, and costs nothing.
+ */
+async function readTickets(me: Address, ids: number[]): Promise<Map<number, { wei: bigint; held: boolean }> | null> {
+  if (sellsTickets === false || ids.length === 0) return null;
+  try {
+    const [prices, held] = await publicClient.readContract({ ...hunt, functionName: 'tickets', args: [me, ids.map((id) => BigInt(id))] });
+    sellsTickets = true;
+    return new Map(ids.map((id, i) => [id, { wei: prices[i], held: held[i] }]));
+  } catch (e) {
+    const refused = e instanceof BaseError && !!e.walk((x) => x instanceof ContractFunctionRevertedError || x instanceof ContractFunctionZeroDataError);
+    if (refused && sellsTickets === null) sellsTickets = false;
+    else console.warn('[hunt] could not read the season tickets', e);
+    return null;
+  }
+}
+
 export async function loadHunts(): Promise<void> {
   if (!HUNT_DEPLOYED) return;
   const me = state.wallet?.address ?? zero;
@@ -196,12 +222,19 @@ export async function loadHunts(): Promise<void> {
   }
   try {
     const [[views, total, time]] = await Promise.all([publicClient.readContract({ ...hunt, functionName: 'list', args: [me, 0n, BigInt(shown)] }), readBeacon()]);
+    const tickets = await readTickets(
+      me,
+      views.map((v) => Number(v.id)),
+    );
+    const before = new Map(hunts.list.map((s) => [s.id, s]));
     hunts.skew = Number(time) - Date.now() / 1000;
     hunts.total = Number(total);
     hunts.list = views.map((v) => {
       const s = v.season;
       const r = s.rules;
       const funded = s.sponsor !== zero;
+      const was = before.get(Number(v.id));
+      const ticket = tickets?.get(Number(v.id)) ?? (tickets || !was ? { wei: 0n, held: false } : { wei: was.ticketWei, held: was.hasTicket });
       return {
         id: Number(v.id),
         name: r.name,
@@ -225,6 +258,9 @@ export async function loadHunts(): Promise<void> {
         returned: s.returned,
         trophyId: s.trophyId,
         attemptsLeft: Number(v.attemptsLeft),
+        ticket: Number(formatEther(ticket.wei)),
+        ticketWei: ticket.wei,
+        hasTicket: ticket.held,
       };
     });
     hunts.loaded = true;
@@ -241,6 +277,12 @@ export function showMoreHunts(): Promise<void> {
   shown += PAGE;
   return loadHunts();
 }
+
+/**
+ * The fish that are season trophies, by id, as far as the page has read the seasons. The game does not buy a
+ * trophy (`TrophyNotForSale`): the Sell buttons leave these out, so that one trophy does not fail a whole sale.
+ */
+export const trophyIds = (): Set<string> => new Set(hunts.list.filter((s) => s.trophyId > 0n).map((s) => s.trophyId.toString()));
 
 /** The season that takes casts right now, if any. */
 export const activeHunt = (): HuntSeason | null => hunts.list.find((s) => statusNow(s) === 'active') ?? null;
@@ -269,7 +311,28 @@ export function huntBlocker(s: HuntSeason, save: Save, water = save.location): s
   if (!s.waters.includes(water)) return `The ${fish} is not hunted in this water`;
   if (s.rods.length > 0 && !s.rods.includes(tackleOf(save).rod)) return `This season is fished with: ${s.rods.map((r) => RODS[r]?.name ?? `rod ${r}`).join(', ')}`;
   if (s.minLevel > 1 && levelOfXp(save.xp) < s.minLevel) return `This season starts at level ${s.minLevel}`;
+  if (needsTicket(s)) return `This season is fished with a ticket: ${ticketText(s)}, once`;
   if (s.attemptsLeft <= 0) return 'No seasonal casts left today: they return at midnight UTC';
+  return null;
+}
+
+/** The season asks for a ticket and the connected player does not hold it. */
+export const needsTicket = (s: HuntSeason): boolean => s.ticket > 0 && !s.hasTicket;
+
+/** `250 PEARL`. */
+export const ticketText = (s: HuntSeason): string => `${s.ticket.toLocaleString('en-US', { maximumFractionDigits: 2 })} PEARL`;
+
+/**
+ * Why the connected player cannot buy the ticket of `s` right now, or null when they can. The contract sells a
+ * ticket only to a wallet that could cast: the season is running and the wallet has its level.
+ */
+export function ticketBlocker(s: HuntSeason, save: Save): string | null {
+  if (!needsTicket(s)) return 'There is no ticket to buy';
+  const st = statusNow(s);
+  if (st === 'upcoming') return 'Tickets are sold once the season has started';
+  if (st !== 'active') return 'The season is not taking casts any more';
+  if (s.minLevel > 1 && levelOfXp(save.xp) < s.minLevel) return `This season starts at level ${s.minLevel}`;
+  if (save.pearl < s.ticket) return `Not enough PEARL: the ticket is ${ticketText(s)}`;
   return null;
 }
 
@@ -327,6 +390,42 @@ export async function castForHunt(s: HuntSeason, water: number): Promise<Transac
   return receipt;
 }
 
+/**
+ * Buys the season's ticket: an approval of PEARL for exactly its price (when the current one is too small) and the
+ * purchase, signed together. The PEARL is burned by the hunt: nobody receives it, and it is not returned.
+ */
+async function buyTicket(s: HuntSeason): Promise<TransactionReceipt | undefined> {
+  const w = state.wallet;
+  if (!w || !deployment) {
+    toast('Connect with Fluent to play', 'info');
+    return undefined;
+  }
+  if (DEMO) {
+    toast('This is a preview of the page: nothing is sent to the contract.', 'info');
+    return undefined;
+  }
+  const label = `Season ticket · ${s.name}`;
+  try {
+    const pearl = { address: deployment.pearl, abi: erc20Abi } as const;
+    // asked of the contract now: the price that is burned is the contract's, whatever the page last read
+    const [price, allowance] = await Promise.all([publicClient.readContract({ ...hunt, functionName: 'ticketPrice', args: [BigInt(s.id)] }), publicClient.readContract({ ...pearl, functionName: 'allowance', args: [w.address, hunt.address] })]);
+    if (price !== s.ticketWei) throw new Error('The ticket price on the page is out of date. Reload and look again.');
+    const calls = [];
+    if (allowance < price) calls.push({ to: pearl.address, abi: erc20Abi, method: 'approve', args: [hunt.address, price] });
+    calls.push({ to: hunt.address, abi: seasonHuntAbi, method: 'buyTicket', args: [BigInt(s.id)] });
+    const hash = await fluentSend(calls, label);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash, pollingInterval: 300 });
+    if (receipt.status !== 'success') throw new Error('Transaction reverted');
+    s.hasTicket = true;
+    toast(`${label}: ${ticketText(s)} burned. Your casts in this season count now.`, 'ok', 8000);
+    return receipt;
+  } catch (e) {
+    console.warn('[hunt] buying the ticket failed', e);
+    toast(`${label}: ${friendlyError(e)}`, 'err');
+    return undefined;
+  }
+}
+
 async function act(busy: string, f: () => Promise<TransactionReceipt | undefined>): Promise<boolean> {
   if (hunts.busy) return false;
   hunts.busy = busy;
@@ -346,6 +445,8 @@ export const huntOps = {
   trophy: (s: HuntSeason) => act('trophy', () => write('Land the trophy', 'mintTrophy', [BigInt(s.id)])),
   /** The sponsor takes back the prize of a season nobody won, or one that was called off. */
   reclaim: (s: HuntSeason) => act('reclaim', () => write('Take the prize back', 'reclaim', [BigInt(s.id)])),
+  /** Buys the connected player's ticket for a season that asks for one. */
+  ticket: (s: HuntSeason) => act('ticket', () => buyTicket(s)),
   /** Sends the proof of a hit again, after a refused or failed first try. */
   record: (p: PendingAttempt) => act('record', () => recordHit(p).then(() => undefined)),
 };
@@ -501,13 +602,16 @@ export async function recoverAttempts(): Promise<void> {
   for (const s of open) {
     try {
       const head = await publicClient.getBlockNumber({ cacheTime: 0 });
-      // about a block a second on Fluent; a wider net costs nothing but a larger query
-      const back = BigInt(Math.min(s.settleWindow * 2 + 120, 20_000));
-      const from = head > back ? head - back : 0n;
-      const logs = await publicClient.request({
-        method: 'eth_getLogs',
-        params: [{ address: hunt.address, fromBlock: `0x${from.toString(16)}`, toBlock: `0x${head.toString(16)}`, topics: [SEASON_CAST, pad(`0x${s.id.toString(16)}`), pad(me)] }],
-      });
+      // about a block a second on Fluent: twice the window in blocks reaches every cast whose hit can still be
+      // recorded, in queries small enough for a public node. The newest blocks come first.
+      const logs: unknown[] = [];
+      for (const [from, to] of logRanges(head, s.settleWindow * 2 + 120)) {
+        const part = await publicClient.request({
+          method: 'eth_getLogs',
+          params: [{ address: hunt.address, fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}`, topics: [SEASON_CAST, pad(`0x${s.id.toString(16)}`), pad(me)] }],
+        });
+        logs.push(...(part as unknown[]));
+      }
       for (const l of parseEventLogs({ abi: seasonHuntAbi, logs: logs as never, eventName: 'SeasonCast' })) {
         const seq = Number(l.args.seq);
         if (hunts.pending.some((p) => p.season === s.id && p.seq === seq)) continue;

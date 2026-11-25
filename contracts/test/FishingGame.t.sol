@@ -328,7 +328,7 @@ contract FishingGameTest is BaseTest {
         assertEq(afterIt.energy, before.energy, "energy is not refunded");
         assertEq(game.rodDurability(alice, 1), durability, "rod wear is not refunded");
         assertEq(game.lureCasts(alice, 0), casts, "the lure cast is not refunded");
-        assertEq(game.dryCatches(alice, 0), 0, "pity does not advance on a skipped cast");
+        assertEq(lens.dryCatches(alice, 0), 0, "pity does not advance on a skipped cast");
     }
 
     /// @dev What `who`'s pending cast would land with `entropy` as its block hash: 0 for no fish, else the fish.
@@ -454,8 +454,8 @@ contract FishingGameTest is BaseTest {
         FishingGame.WeekEntry[] memory week = lens.weekEntries(game.currentWeek(), alice);
         assertEq(week.length, 1);
         assertEq(week[0].score, CatchMath.score(s.rarity, s.minWeight, s.maxWeight, f.weight, f.quality));
-        assertEq(game.weekTotal(game.currentWeek(), alice), week[0].score);
-        assertEq(game.weekPlayerCount(game.currentWeek()), 1);
+        assertEq(lens.weekTotal(game.currentWeek(), alice), week[0].score);
+        assertEq(lens.weekPlayerCount(game.currentWeek()), 1);
     }
 
     function test_scoreFormula() public view {
@@ -485,22 +485,22 @@ contract FishingGameTest is BaseTest {
             sum += list[i].score;
             if (i > 0) assertGe(list[i - 1].score, list[i].score);
         }
-        assertEq(game.weekTotal(week, alice), sum);
+        assertEq(lens.weekTotal(week, alice), sum);
         vm.prank(alice);
         game.sellFish(ids);
-        assertEq(game.weekTotal(week, alice), sum, "selling must not remove tournament points");
+        assertEq(lens.weekTotal(week, alice), sum, "selling must not remove tournament points");
         assertEq(game.playerOf(alice).dexCount > 0, true);
     }
 
     function test_aNewWeekStartsEmptyAndKeepsTheOldOne() public {
         _catch(alice, 0, 7);
         uint256 week = game.currentWeek();
-        uint32 total = game.weekTotal(week, alice);
+        uint32 total = lens.weekTotal(week, alice);
         vm.warp((week + 1) * 1 weeks);
         assertEq(game.currentWeek(), week + 1);
         assertEq(lens.weekEntries(week + 1, alice).length, 0);
         _catch(alice, 0, 8);
-        assertEq(game.weekTotal(week, alice), total);
+        assertEq(lens.weekTotal(week, alice), total);
         assertEq(lens.weekEntries(week + 1, alice).length, 1);
         (uint256[] memory ids, uint32[] memory totals) = lens.weekHistory(alice, 2);
         assertEq(ids[0], week);
@@ -513,7 +513,7 @@ contract FishingGameTest is BaseTest {
         (address[] memory anglers, uint32[] memory totals) = lens.weekStandings(game.currentWeek(), 0, 50);
         assertEq(anglers.length, 2);
         assertEq(anglers[0], alice);
-        assertEq(totals[1], game.weekTotal(game.currentWeek(), bob));
+        assertEq(totals[1], lens.weekTotal(game.currentWeek(), bob));
     }
 
     // ------------------------------------------------------------------ selling

@@ -121,6 +121,9 @@ function season(id: number, spec: Spec, weekStart: number, fate: Fate, now: numb
     returned: fate.kind === 'nobody' && !!fate.returned,
     trophyId: fate.kind === 'hooked' && hooked ? (fate.trophy ?? 0n) : 0n,
     attemptsLeft: status === 'active' ? Math.max(0, spec.dailyAttempts - 3) : 0,
+    ticket: 0,
+    ticketWei: 0n,
+    hasTicket: false,
   };
 }
 

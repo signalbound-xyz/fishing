@@ -49,7 +49,18 @@ recorded), Winner found, Expired, Cancelled (called off before the start, or nev
 
 MVP parameters, all of them per-season data and none hardcoded: 7 days, free entry, 20 attempts per wallet and UTC
 day, one winner takes 100%, prize in escrow before the start. A season can also require a minimum level
-(`minLevel`) and restrict the rods that may be used (`rods`), which are the Sybil levers discussed below.
+(`minLevel`), restrict the rods that may be used (`rods`) and ask every wallet for a ticket (below), which are the
+Sybil levers discussed further down.
+
+**A season ticket (in the source, not on the chain yet).** `createTicketed(rules, ticket)` announces a season with
+a price in PEARL that is final like its rules; `create(rules)` announces a free one, as before. In a ticketed
+season a wallet calls `buyTicket(seasonId)` once, before its first seasonal cast: the hunt takes exactly that much
+PEARL from the wallet and burns it. Nobody receives it, the owner cannot take it out, and it is not returned,
+whoever wins. A ticket is sold only to a wallet that could cast at that moment (the season is funded and running,
+nobody holds the catch, the wallet has the level), so nobody pays for a season that is already decided or not
+open. `cast` without the ticket reverts with `TicketRequired` before anything is charged. `ticketsBurned` is the
+running total. The hunt on Fluent Testnet is the first release and has no tickets; see "What is in the source and
+not on the chain".
 
 ## Weekly seasons
 
@@ -72,7 +83,7 @@ waters and every number of the rules. Nothing of the schedule is in the code.
 
 | What | Where | Who writes it | What it holds |
 |---|---|---|---|
-| The week file | `contracts/script/seasons/weeks/<id>.json` | the organiser, by hand | `version`, `id`, `title`, `description`, `start` (UTC, `2026-12-07T00:00:00Z`), `days`, `totalPrizeBlend`, `settleWindowSeconds`, and three `hunts`: `name`, `description`, `difficulty`, `startHour`, `durationHours`, `prizeShare`, and the season's rules (`speciesId`, `waters`, `rods`, `minLevel`, `dailyAttempts`, `baseChance`, `maxBonus`, `rodBonus`, `lureBonus`, `waterBonus`) |
+| The week file | `contracts/script/seasons/weeks/<id>.json` | the organiser, by hand | `version`, `id`, `title`, `description`, `start` (UTC, `2026-12-07T00:00:00Z`), `days`, `totalPrizeBlend`, `settleWindowSeconds`, and three `hunts`: `name`, `description`, `difficulty`, `startHour`, `durationHours`, `prizeShare`, and the season's rules (`speciesId`, `waters`, `rods`, `minLevel`, `dailyAttempts`, `baseChance`, `maxBonus`, `rodBonus`, `lureBonus`, `waterBonus`); optionally `ticketPearl`, the hunt's ticket in whole PEARL (left out: free; refused on a hunt that sells no tickets) |
 | The hunts | `SeasonHunt` on the chain | `createWeek` | three seasons with consecutive dates; rules final once created |
 | The record | `deployments/weeks/<chainId>/<id>.json` | the script, from the chain | `version`, `id`, `chainId`, `seasonHunt`, `huntIds` (the three on-chain season ids, in order) |
 | The registry | `web/src/generated/weeks.ts` | `pnpm sync`, from the two files above | per chain: the week's id, title, description, dates and `{seasonId, difficulty}` of each hunt |
@@ -227,10 +238,17 @@ exactly what they were. `test_the_ordinary_catch_is_the_same_through_the_hunt` p
 same fish, XP and state whether it is made directly or through the hunt.
 
 **The trophy is a real fish with less bookkeeping.** It is minted by the game's fish contract and can be kept,
-shown, listed or sold like any fish. It is not entered into the collection (dex), gives no XP and emits no
-`Caught` event: routing it through the game's own landing code cost 2,078 bytes and did not fit. Selling it pays
-the ordinary PEARL price of that fish, so each won season can mint the PEARL value of one fish of the target
-species; that is the only way the hunt touches the PEARL supply, and it is bounded at one fish per season.
+shown, listed on the market or given away like any fish. It is not entered into the collection (dex), gives no XP
+and emits no `Caught` event: routing it through the game's own landing code cost 2,078 bytes and did not fit.
+
+**The game does not buy a trophy (in the source; release 004 on the chain still does).** `landFor` marks the fish
+it mints (`isTrophy`, one mapping appended to the game's storage, read through `GameLens.isTrophy`), and
+`sellFish` reverts with `TrophyNotForSale` for a marked fish. Without this, each won season could mint the PEARL
+price of one fish of the target species for a catch no cast paid for; with it the hunt does not touch the PEARL
+supply at all, except to burn tickets. The mark stays with the fish whoever owns it. A trophy minted before the
+upgrade is not marked and the game still buys it: on Fluent Testnet that can only be the trophy of season 0, if
+it is won and claimed before the upgrade. The client leaves the trophies it knows of out of its Sell buttons
+today, on either release.
 
 ## Who wins
 
@@ -312,11 +330,32 @@ Residual risks of the drand beacon:
 - **Block timestamps.** If blocks carry timestamps more than `margin` behind real time (a sequencer catching up
   after a halt, or one that lies), a round is public before the cast it decides is in a block, and a player could
   submit only casts that win. Fluent Testnet's timestamps were measured about 1 s behind real time. `margin` is the
-  knob; a possible hardening is to mix a later block hash into the draw (EIP-2935 makes that readable for 8,191
-  blocks), which would need both the sequencer and a stale clock to cheat.
+  knob. The keeper measures the lag on every pass and says so when it reaches half the margin ("If the clock
+  lags", below). Mixing a later block hash into the draw was considered and not done: a block hash can be read
+  back for 8,191 blocks (EIP-2935), a little over two hours on Fluent, so it would cap the settle window at that
+  and make every hit older than it unrecordable, which is the loss the long window exists to prevent. It would
+  also need a new beacon and a new hunt.
 - **drand itself.** A threshold of League of Entropy members colluding could know rounds early. An outage of
   drand longer than a settle window would make the hits cast in that time unrecordable.
 - **The verifier is not audited.** It is about 190 lines, mostly field arithmetic, checked against live rounds.
+
+### If the clock lags
+
+The keeper's report has `clock: { lagSeconds, marginSeconds }`: real time minus the head block's timestamp when
+the pass began, and the beacon's margin. A second or two is the block time and the node's delay.
+
+| Lag | What the keeper says | What to do |
+|---|---|---|
+| under half the margin | nothing | nothing |
+| half the margin or more | a note with the seconds to spare | watch it; find out whether the chain has stopped or is stamping late |
+| the margin or more, a season taking casts | a note that starts with `DANGER` | a cast made now is decided by a round that is already public. Stop seasonal casting with `--sig "detach()"` (hits already cast stay recordable, prizes already won stay claimable) or pause all casting (`contracts/script/Water.s.sol`), and attach again when blocks are on time |
+| the margin or more, no season taking casts | a note | do not let a season start while it is so |
+
+A chain that has stopped shows the same lag as one that stamps late, and only the second is dangerous: when a
+stopped chain resumes, its next block carries the current time. The keeper cannot tell the two apart, so it
+reports both. It only reports: the contracts cannot know real time, and nothing on the chain stops a cast in a
+late-stamped block. A season after an incident can be judged from the chain alone: compare the timestamps of its
+blocks with the drand rounds of its attempts.
 
 ### The prototype beacon (`BlockhashBeacon`)
 
@@ -370,13 +409,14 @@ see the balance report for why, and for the base chance by expected crowd.
 
 | Threat | Assessment |
 |---|---|
-| **Sybil: many wallets in one hand** | **Open in a free season.** A per-wallet cap does not limit a person. Energy is free and refills, so a wallet costs gas only. See the numbers below. Levers that exist: `minLevel` (each wallet must be played up first), `rods` (each wallet must own a paid rod). Not built: an entry fee, identity attestation |
+| **Sybil: many wallets in one hand** | **Open in a free season; priced, not closed, in a ticketed one.** A per-wallet cap does not limit a person. Energy is free and refills, so a wallet costs gas only. See the numbers below. Levers that exist: `minLevel` (each wallet must be played up first, once), `rods` (each wallet must own a paid rod, once), and a ticket in PEARL burned by every wallet in every season (in the source, not on the chain). Not built: identity attestation |
 | Bots | A cast needs no skill, so a script is just a player who never misses a day. Bounded per wallet by the cap and energy; many wallets is the Sybil row |
-| Sequencer picks the randomness | Possible with the block-hash beacon (testnet only, enforced). Not possible with drand unless block timestamps lag by more than the margin |
+| Sequencer picks the randomness | Possible with the block-hash beacon (testnet only, enforced). Not possible with drand unless block timestamps lag by more than the margin; the keeper measures that lag on every pass ("If the clock lags") |
+| A hit nobody records in time | A hit counts only if `settle` is sent within the season's settle window after the cast; after that it is gone, by design (it is what makes the result final). The winner's own page sends it, the keeper sends it for a closed tab, and the page of a returning player finds its casts on the chain for the whole window. The season files give six hours, so both would have to be away that long. The price of a long window: the result is final, and the prize claimable, that much later |
 | Front-running a settlement | Gains nothing: the prize goes to the attempt's caster, whoever sends the proof |
 | Front-running a cast | With drand nobody knows which cast will hit, so position is worth nothing in expectation |
 | Selective settlement | A player cannot hide another player's hit; anyone can settle it. Holding back one's own hit only risks losing it |
-| Delaying one's own hit | A hit can sit unrecorded for up to `settleWindow`, during which others keep casting attempts that will lose to it. They still land their ordinary catches, so they lose only the hope. A keeper that settles every hit as it appears removes this; it is built ([web/KEEPER.md](web/KEEPER.md)) and not yet run |
+| Delaying one's own hit | A hit can sit unrecorded for up to `settleWindow` (six hours in the season files), during which others keep casting attempts that will lose to it, and in a ticketed season keep buying tickets. They still land their ordinary catches, so they lose only the hope. A keeper that settles every hit as it appears removes this; it is built ([web/KEEPER.md](web/KEEPER.md)) and not yet run |
 | Censoring a settlement | The sequencer could ignore a `settle` for the whole window. Same trust as every transaction on the chain; a longer window makes it harder to do unnoticed |
 | Replay | The draw is bound to chain, contract, season, attempt number and player; the proof to one drand round by the cast's own timestamp |
 | Draining the escrow | One exit per prize, checked by unit, reentrancy and invariant tests (`balance == escrowed == sum of prizes owed`) |
@@ -402,6 +442,28 @@ A hundred scripted wallets take half of a season fished by a hundred real player
 fit for a testnet and for prizes nobody would script for, and for nothing else.** What raises the price of a
 wallet today: `minLevel` 5 costs about 139 ordinary casts (2.9 days of a wallet's energy) before it may hunt, and a
 required paid rod costs 1,500 PEARL per wallet. What a launch with real value needs is in the checklist below.
+
+### What a ticket does about it, and what it does not
+
+The numbers are in [web/SEASON_HUNT_BALANCE.md](web/SEASON_HUNT_BALANCE.md), "A season ticket". In short:
+
+- **Against bought PEARL it works, and the price is a formula.** One more free-tackle wallet is worth its share
+  of the season's chance times the prize. A ticket at that price (the "break-even" ticket: 512 PEARL for a
+  500 BLEND prize and 100 honest anglers) makes every wallet of a pack a loss, the first one included, and a pack
+  that comes anyway burns more than it wins. At half that price a pack of 39 wallets still nets 42 BLEND; at a
+  quarter, 93 wallets net 120. The break-even price falls as the honest crowd grows and rises with the prize.
+- **Against earned PEARL it is a delay, not a wall.** PEARL is earned by fishing, energy is free, and the exchange
+  does not buy PEARL back, so PEARL a script earns costs its owner only time and gas. A wallet that fishes the
+  pond with all its energy earns about 1,100 PEARL a day. A 512 PEARL ticket is 21 ordinary casts, under half a
+  day of one wallet's energy, every season. That is a recurring cost per wallet where `minLevel` and a paid rod
+  are paid once, and it is a real PEARL sink, but a patient farm pays it.
+- **It is flat, and anglers are not.** The break-even ticket is 2.5 times what a newcomer's own chance is worth
+  and 0.4 times what the best-equipped angler's is. A ticket priced against packs makes the hunt a poor bet for
+  the casual player it was free for. A week can ask for a ticket on its medium and hard hunts and keep the easy
+  one free.
+
+So a ticket prices the attack; it does not identify people. A prize worth scripting for still needs one of the
+other items of the checklist beside it.
 
 ## Deployment
 
@@ -484,22 +546,45 @@ report, and change the prize to what the sponsor actually holds.
 
 ## Before a public launch
 
-A hunt with a prize of real value needs all of these; none is done, and one (the keeper) is built.
+A hunt with a prize of real value needs all of these; none is done, and two (the keeper and the ticket) are built.
 
-1. **Sybil resistance.** Free entry with free tackle cannot carry a real prize. Pick at least one: an entry fee
-   that funds the prize (the tournaments' model, so a farm only wins what others paid), a meaningful `minLevel`
-   plus a paid rod, or an identity attestation signed by a verifier (the daily reward's pattern).
+1. **Sybil resistance.** Free entry with free tackle cannot carry a real prize. A ticket in PEARL is built (not
+   deployed) and prices a pack of wallets without stopping a patient one ("What a ticket does about it, and what
+   it does not"). For a prize worth scripting for, add at least one of: an entry fee in BLEND that funds the prize
+   (the tournaments' model, so a farm only wins what others paid), a meaningful `minLevel` plus a paid rod, or an
+   identity attestation signed by a verifier (the daily reward's pattern).
 2. **An audit** of `SeasonHunt`, `DrandBeacon` and the hook.
-3. **The clock.** Measure the network's block-timestamp lag over time and under load, set `margin` from it, and
-   decide on mixing in a later block hash.
+3. **The clock.** The keeper reports the block-timestamp lag on every pass once it runs ("If the clock lags").
+   Collect it over time and under load, and set `margin` from it. Mixing in a later block hash was decided
+   against (it caps the settle window at about two hours).
 4. **A keeper** that settles every hit the moment its round exists, so that no hit depends on its owner's browser
    and nobody can sit on one. **Built, not running:** [web/KEEPER.md](web/KEEPER.md) has what it does, what its
    key can do (pay gas, nothing else) and how to switch it on. It still needs a key with gas, a schedule and
    monitoring, and a rehearsal against the live network with drand proofs.
 5. **Ownership.** The game, the proxies and the hunt behind a multisig with a delay.
-6. **A drand outage plan**: a settle window comfortably longer than any outage drand has had, and monitoring.
+6. **A drand outage plan**: a settle window comfortably longer than any outage drand has had, and monitoring. The
+   season files give six hours (`settleWindowSeconds`); a season keeps the window it was created with.
 7. **The trophy's bookkeeping** (dex entry, XP, `Caught` event), if it should count as a catch; it needs room in
    `FishingGame` first.
+
+## What is in the source and not on the chain
+
+Nothing below has been sent to a network. Each step changes a live contract and needs the owner's explicit
+go-ahead; `contracts/UPGRADES.md` has the procedure and "Release 005" there has the details.
+
+| Change | In the source | On Fluent Testnet | To get it there |
+|---|---|---|---|
+| The game does not buy a trophy | `FishingGame` (`isTrophy`, `TrophyNotForSale`), `GameLens.isTrophy` | release 004 buys it | a game upgrade to release 005, with its lens and the client |
+| Four views moved from the game to the lens (989 bytes free instead of 721) | `FishingGame`, `GameLens` | release 004 | the same upgrade |
+| Season tickets | `SeasonHunt` (`createTicketed`, `buyTicket`, `tickets`) | the first hunt, `0xb09eA27c…`, has none | deploy a new hunt and beacon (`deploy()`), then `attach()` it in place of the old one |
+| Six hours to record a hit | the season files | season 0 was created with one hour and keeps it | nothing: it applies to seasons created from now on, on either hunt |
+| The keeper's clock check, the client's ticket and trophy handling, the longer search for one's own casts | `web/` | the keeper is not running | ship the client; switch the keeper on ([web/KEEPER.md](web/KEEPER.md)) |
+
+Replacing the hunt: the old one keeps its seasons, and a prize already won there stays claimable there. The game
+listens to one hunt at a time, and the client shows the one named in `deployments/<chainId>.json`, so the page
+shows the seasons of the new hunt only. Replace it between weeks, with no season running or closing on the old
+one. A week file with a `ticketPearl` line is refused by the script on a hunt without tickets, before anything is
+sent; a week file without one runs on either.
 
 ## Tests
 
@@ -510,7 +595,14 @@ A hunt with a prize of real value needs all of these; none is done, and one (the
   the UTC reset, energy, rod wear and lure accounting, that a cast through the hunt lands the same ordinary catch,
   hits and misses, concurrent hits, settlement order, unsettled and expired attempts, finality, claiming, the
   trophy, double claims, refunds, roll-over, unauthorized withdrawals, history paging, tournaments running beside
-  a season, the season file, reentrancy with a hostile token, and a hunt on the drand beacon with a real round.
+  a season, the season file, reentrancy with a hostile token, a hunt on the drand beacon with a real round, and
+  that the game refuses to buy a trophy.
+- `SeasonTicket.t.sol`: a ticketed season and a free one side by side. The price is final and announced; no cast
+  without the ticket, and nothing charged for the refusal; the PEARL is burned (the supply falls, the hunt holds
+  none, `ticketsBurned` counts it); once per wallet and per season; no ticket before the start, after the end, in
+  an unfunded, cancelled or unknown season, after the fish is hooked or below the level; allowance and balance;
+  a ticketed season won and paid, and one nobody won returned to its sponsor; `rescue` finds no PEARL; two fuzz
+  tests over prices and buyers.
 - `SeasonHunt.invariant.t.sol`: random sequences of every action anyone can take. The escrow always equals the
   prizes owed and the tokens held; every BLEND that went in is still there, went to a winner or went back to its
   sponsor; a prize leaves once; a final result never changes; the catch is always held by the lowest hit settled;
@@ -526,9 +618,16 @@ A hunt with a prize of real value needs all of these; none is done, and one (the
   season in the way); creating and funding three hunts; a second run that sends nothing; a run
   that failed part-way and is finished by repeating it; an edited file; owner-only creation; three hunts with
   three results, an early winner that does not start the next hunt, one angler winning two, an unfunded hunt
-  that never runs, and roll-over by the sponsor only.
-- `web`: `src/game/hunt.test.ts` (the chance arithmetic against the contract's numbers, the drand round of a cast),
-  `src/game/week.test.ts` (the week file's validation, grouping by the registry, every card and week status, the
+  that never runs, and roll-over by the sponsor only. Tickets: a week file with `ticketPearl` on one hunt creates
+  that hunt ticketed and the others free, a second run finds them, a changed price does not pass for the hunt
+  that exists, a price written in wei is refused, and a hunt without tickets takes free weeks and refuses
+  ticketed ones before anything is sent.
+- `GameLens.t.sol`: the four reads moved to the lens (weekly totals and players, pity counters) and `isTrophy`
+  against the compiler's own getters on the same storage.
+- `web`: `src/game/hunt.test.ts` (the chance arithmetic against the contract's numbers, the drand round of a cast,
+  the block ranges in which a player's own casts are looked for over a six-hour window),
+  `src/server/keeper.test.ts` (the keeper, its clock check among the rest),
+  `src/game/week.test.ts` (the week file's validation with and without tickets, grouping by the registry, every card and week status, the
   countdown, the archive, claims, seasons from before weekly seasons, a registry that disagrees with the chain),
   `sim/week.test.ts` (the week simulation, and that the week file's base chances are the fitted ones),
   `src/play/routes.test.ts` (the navigation without Tournaments, the legacy page still routed).

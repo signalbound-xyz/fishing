@@ -128,6 +128,23 @@ describe('the week file', () => {
     version.version = 2;
     expect(validateWeek(version, CATALOG)).toContain('version must be 1');
   });
+
+  it('a hunt may ask for a ticket in whole PEARL; without the line it is free', () => {
+    expect(file().hunts.every((h) => h.ticketPearl === undefined)).toBe(true);
+    const ticketed = file();
+    ticketed.hunts[1].ticketPearl = 250;
+    ticketed.hunts[2].ticketPearl = 0;
+    expect(validateWeek(ticketed, CATALOG)).toEqual([]);
+    for (const bad of [-1, 2.5, 250e18, Number.NaN]) {
+      const f = file();
+      f.hunts[1].ticketPearl = bad;
+      expect(validateWeek(f, CATALOG).join('\n'), String(bad)).toMatch(/hunt 2: ticketPearl must be a whole number of PEARL/);
+    }
+  });
+
+  it('a hit can be recorded for six hours after its cast: long enough for a keeper that was down to come back', () => {
+    expect(file().settleWindowSeconds).toBe(6 * 3600);
+  });
 });
 
 describe('a hunt over time', () => {
