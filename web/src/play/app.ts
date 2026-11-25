@@ -132,7 +132,7 @@ function route(): void {
   cupEl.classList.toggle('hidden', !cup);
   huntEl.classList.toggle('hidden', !hunt);
   tackleEl.classList.toggle('hidden', !tackle);
-  document.title = tackle ? 'Tackle · Onchain Fishing' : hunt ? 'Season Hunt · Onchain Fishing' : cup ? 'Tournaments · Onchain Fishing' : profile ? 'My Stats · Onchain Fishing' : stats ? 'Debug telemetry · Onchain Fishing' : 'Onchain Fishing';
+  document.title = tackle ? 'Tackle · Onchain Fishing' : hunt ? 'Season Hunt · Onchain Fishing' : cup ? 'Legacy tournaments · Onchain Fishing' : profile ? 'My Stats · Onchain Fishing' : stats ? 'Debug telemetry · Onchain Fishing' : 'Onchain Fishing';
   emit();
 }
 window.addEventListener('hashchange', () => {

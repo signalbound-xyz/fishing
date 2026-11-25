@@ -1,4 +1,8 @@
-/** Leaderboards: the weekly championship (local score + labelled demo opponents), personal records, collection. */
+/**
+ * Personal records: the player's week (the sum of their best catches, beside everyone else's), biggest catches,
+ * collection. A record of fishing, not a competition: nothing is won here. The game's competition is the Season
+ * Hunt (ui/hunt.ts).
+ */
 import { LOCATIONS, SPECIES } from '../../game/content';
 import { achievements, collectorStats } from '../../game/progress';
 import { COUNTED_CATCHES, SETTLEMENT_ENABLED, WEEKLY_REWARDS, standings, weekEnd, weekId, weekStart, weekTotal } from '../../game/tournament';
@@ -16,7 +20,7 @@ import { ago, duration, pearl, qualityTag } from './fmt';
 
 type View = 'weekly' | 'biggest' | 'collector';
 const VIEWS: [View, string][] = [
-  ['weekly', 'Weekly cup'],
+  ['weekly', 'My week'],
   ['biggest', 'Biggest catch'],
   ['collector', 'Collector'],
 ];
@@ -67,7 +71,7 @@ function weekly(): HTMLElement[] {
     h(
       'section',
       { class: 'shop-sec' },
-      h('div', { class: 'dex-head' }, h('h3', { text: 'Weekly Angler Championship' }), h('div', { class: 'spacer' }), countdownEl),
+      h('div', { class: 'dex-head' }, h('h3', { text: 'Your week' }), h('div', { class: 'spacer' }), countdownEl),
       h(
         'div',
         { class: 'weekly' },
@@ -75,12 +79,12 @@ function weekly(): HTMLElement[] {
         h(
           'div',
           null,
-          h('b', { text: mine.length ? (rank > 0 ? `Your score · place ${rank} of ${table.length}` : 'Your score') : 'No catches this week yet' }),
+          h('b', { text: mine.length ? (rank > 0 ? `Your weekly score · ${rank} of ${table.length} anglers` : 'Your weekly score') : 'No catches this week yet' }),
           h('div', { class: 'muted small', text: `Sum of your ${COUNTED_CATCHES} best catches this week (${mine.length}/${COUNTED_CATCHES} counted). Points are fixed when the fish is landed: selling it keeps them.` }),
         ),
       ),
       CHAIN
-        ? h('p', { class: 'muted small', text: 'Live standings from the game contract: every angler who landed a fish this week.' })
+        ? h('p', { class: 'muted small' }, 'A record of the week’s fishing, read from the game contract: every angler who landed a fish. Nothing is won here; the game’s competition is the ', h('a', { class: 'link', text: 'Season Hunt', attrs: { href: '#/hunt' } }), '.')
         : h(
             'p',
             { class: 'note-demo small' },
@@ -125,7 +129,10 @@ function weekly(): HTMLElement[] {
           ),
       h('p', { class: 'muted small', text: 'Score = rarity points × weight factor (0.7–1.5 of the species average) × quality (D 0.8 … S 1.3). Only ten catches count, so one good hour can beat a week of grinding.' }),
     ),
-    h(
+    // rank rewards are not paid on the contracts, and a table of them would read as a second competition
+    CHAIN && !SETTLEMENT_ENABLED
+      ? null
+      : h(
       'section',
       { class: 'shop-sec' },
       h('h3', { text: 'Planned rewards' }),

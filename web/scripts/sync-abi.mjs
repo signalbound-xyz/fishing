@@ -78,4 +78,46 @@ if (!existsSync(depDir) && existsSync(depDst)) {
   );
 }
 
-console.log(`[sync] ABIs: ${wroteAbi} written, deployments: ${Object.keys(deployments).join(', ') || 'none'}`);
+// Weekly seasons: three hunts of the season hunt shown as one event (src/game/week.ts). The week file says what the
+// week is called and how it was planned; the record, written by the script that created the hunts, says which
+// on-chain seasons they are. A record made for another hunt contract than the deployed one is left out.
+const weekDir = join(web, '..', 'contracts', 'script', 'seasons', 'weeks');
+const recordDir = join(depDir, 'weeks');
+const weeks = {};
+let weekCount = 0;
+if (existsSync(recordDir)) {
+  for (const chain of readdirSync(recordDir)) {
+    if (!/^\d+$/.test(chain) || !deployments[chain]?.seasonHunt) continue;
+    for (const f of readdirSync(join(recordDir, chain)).sort()) {
+      if (!f.endsWith('.json')) continue;
+      const rec = JSON.parse(readFileSync(join(recordDir, chain, f), 'utf8'));
+      const src = join(weekDir, `${rec.id}.json`);
+      if (rec.version !== 1 || !Array.isArray(rec.huntIds) || rec.huntIds.length !== 3 || !existsSync(src)) {
+        console.warn(`[sync] week record ${chain}/${f} is not a week of this repository, skipped`);
+        continue;
+      }
+      if (String(rec.seasonHunt).toLowerCase() !== deployments[chain].seasonHunt.toLowerCase()) {
+        console.warn(`[sync] week record ${chain}/${f} is for another hunt contract, skipped`);
+        continue;
+      }
+      const file = JSON.parse(readFileSync(src, 'utf8'));
+      const start = Date.parse(file.start) / 1000;
+      (weeks[chain] ??= []).push({
+        id: file.id,
+        title: file.title,
+        description: file.description,
+        ...(file.theme ? { theme: file.theme } : {}),
+        start,
+        end: start + file.days * 86400,
+        hunts: rec.huntIds.map((seasonId, i) => ({ seasonId: Number(seasonId), difficulty: file.hunts[i].difficulty })),
+      });
+      weekCount++;
+    }
+  }
+}
+writeFileSync(
+  join(genDir, 'weeks.ts'),
+  `${header}import type { WeekEntry } from '../game/week';\n\n/** Weekly seasons by chain id: which on-chain seasons are the three hunts of each. */\nexport const weeks: Record<string, WeekEntry[]> = ${JSON.stringify(weeks, null, 2)};\n`,
+);
+
+console.log(`[sync] ABIs: ${wroteAbi} written, deployments: ${Object.keys(deployments).join(', ') || 'none'}, weekly seasons: ${weekCount}`);

@@ -1,6 +1,6 @@
 # Onchain Fishing 🎣
 
-A fishing game that runs in smart contracts: casting, fair randomness, rods and lures, catches as NFTs with onchain art, the PEARL currency, a species collection, special fish that unlock new waters, a weekly championship, tournaments, and Season Hunt: one prize fish that the first angler to hook it wins.
+A fishing game that runs in smart contracts: casting, fair randomness, rods and lures, catches as NFTs with onchain art, the PEARL currency, a species collection, special fish that unlock new waters, and Season Hunt, the game's competition: weekly seasons of three prize fish, each won by the first angler to hook it. (Tournaments are kept on the chain as a legacy mode.)
 
 Hypothesis results for the first version are in **[REPORT.md](REPORT.md)**; the current balance is in [web/BALANCE.md](web/BALANCE.md).
 
@@ -8,13 +8,13 @@ Hypothesis results for the first version are in **[REPORT.md](REPORT.md)**; the 
 
 | Folder | Contents |
 |---|---|
-| `contracts/` | Foundry project: `FishingGame` and `Tournaments` (both behind upgradeable proxies), `FightVerifier`, `BottlePool`, `GameLens`, `FishNFT`, `PearlToken`, `PearlExchange`, `Marketplace`, `DailyRewards`, `SeasonHunt` with its randomness beacons + 270 tests (7 of them on a fork of the live network), upgrade tooling ([UPGRADES.md](contracts/UPGRADES.md)) |
+| `contracts/` | Foundry project: `FishingGame` and `Tournaments` (both behind upgradeable proxies), `FightVerifier`, `BottlePool`, `GameLens`, `FishNFT`, `PearlToken`, `PearlExchange`, `Marketplace`, `DailyRewards`, `SeasonHunt` with its randomness beacons + 290 tests (7 of them on a fork of the live network), upgrade tooling ([UPGRADES.md](contracts/UPGRADES.md)) |
 | `contracts/script/Water.s.sol` | pausing and resuming casts before a change of rules ("Still water" in UPGRADES.md) |
-| `contracts/script/SeasonHunt.s.sol`, `contracts/script/seasons/` | deploying the hunt, announcing and funding a season; a season is a JSON file |
+| `contracts/script/SeasonHunt.s.sol`, `contracts/script/seasons/` | deploying the hunt, announcing and funding a season or a weekly season of three hunts; a season is a JSON file, a week is one in `seasons/weeks/` |
 | `contracts/script/GameSetup.sol` | catalog: species, locations, rods, lures, special fish, achievements, config |
 | `sim/` | model of the first version's formulas and an agent-based economy simulation (Python) |
 | `web/` | browser client (Vite + TypeScript + viem), see [web/README.md](web/README.md); the daily reward verifier and the operator's keeper ([web/KEEPER.md](web/KEEPER.md)) as serverless functions |
-| `deployments/` | contract addresses per chainId (written by the deploy script) |
+| `deployments/` | contract addresses per chainId (written by the deploy script); `deployments/weeks/<chainId>/` records which on-chain seasons each weekly season is |
 
 ## Quick start
 
@@ -115,7 +115,25 @@ The draw uses the [drand](https://drand.love) randomness beacon, whose signature
 
 **It is live on Fluent Testnet since 24 November 2026** (the first season, "The Stray Taimen", runs to 1 December for 1,000 test BLEND). A free season is open to anybody who runs many wallets, so until that is solved it is for testnet prizes only. The design, the security assessment, the deployment steps and what a public launch needs are in [SEASON_HUNT.md](SEASON_HUNT.md); the simulated odds are in [web/SEASON_HUNT_BALANCE.md](web/SEASON_HUNT_BALANCE.md) (`cd web && pnpm sim:hunt`).
 
-## Tournaments
+### Weekly seasons
+
+Seasons are run as weeks of three hunts, one after another: an easy one (suggested Monday and Tuesday, 20% of the pool), a medium one (Wednesday and Thursday, 30%) and a hard one (Friday to Sunday, 50%). Each hunt is an ordinary season of the same `SeasonHunt` contract, with its own fish, waters, rules, escrowed prize, winner and claim; the contract was not changed and knows nothing of weeks. A hunt starts at its own time even when the one before it was won in its first hour, and a prize nobody won goes nowhere without its sponsor.
+
+A week is one file, `contracts/script/seasons/weeks/<id>.json`: the title, the start, and the three hunts with all their rules, so nothing of the schedule is in the code. The same script checks it against the chain, creates the three hunts, funds them and writes down which on-chain seasons they became (`deployments/weeks/<chainId>/<id>.json`); the client groups the seasons by that record. Harder hunts are not only rarer fish: they admit fewer anglers (level, waters), give fewer casts a day, are set for fewer expected hits, and let tackle count for more.
+
+```bash
+cd contracts
+WEEK=2026-w50 forge script script/SeasonHunt.s.sol --sig "checkWeek()" --rpc-url fluent_testnet     # reads only
+WEEK=2026-w50 forge script script/SeasonHunt.s.sol --sig "createWeek()" --rpc-url fluent_testnet --broadcast --private-key <owner key>
+WEEK=2026-w50 forge script script/SeasonHunt.s.sol --sig "fundWeek()" --rpc-url fluent_testnet --broadcast --private-key <sponsor key>
+cd ../web && pnpm sync    # then commit the record and the registry, and publish
+```
+
+Running a command again after a failure is safe: a hunt that exists with exactly the file's rules is never created or funded twice. The whole procedure is under "Weekly seasons" in [SEASON_HUNT.md](SEASON_HUNT.md), and what each hunt of the example week does for crowds of 10 to 10,000 is in [web/SEASON_HUNT_BALANCE.md](web/SEASON_HUNT_BALANCE.md) (`cd web && pnpm sim:week`). **No weekly season has been created on a network yet**; `2026-w50.json` is the example, written for the testnet's handful of players.
+
+## Tournaments (legacy)
+
+Season Hunt replaced tournaments as the game's competition. The `Tournaments` contract, its state, its results and its prizes are untouched and stay on the chain; the page is still in the client at `#/cup` ("Legacy tournaments", linked from the Season Hunt page), where a running tournament can be fished, past results read and an outstanding prize claimed. The link is gone from the navigation, and no new tournaments are meant to be opened; nothing ever opened them automatically. The rest of this section describes the mode as it is on the chain.
 
 Short events with a BLEND prize pool where the fight decides the score. Each tournament is fished with one rod and only players who own that rod in the game may enter (everyone owns the first one), so everyone fishes the same water with the same tackle and the same number of casts; every cast hooks a fish (which one is the block-hash draw); the player gets one fight at it. The browser records the fight as one bit per 50 ms tick, and `Tournaments.reel(id, inputs)` replays the recording in `FightVerifier` and scores the catch: half the fish's points for landing it, up to all of them by the share of the fight spent in the green. The score of a tournament is the sum of the best `counted` catches; ties go to whoever got there first; the top three share the prize pool 50 / 30 / 20 and claim it themselves.
 

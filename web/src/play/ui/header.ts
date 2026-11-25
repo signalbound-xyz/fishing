@@ -186,7 +186,7 @@ function render(on: HeaderHandlers): HTMLElement[] {
       h('span', { class: 'logo' }, icon('bobber')),
       h('span', { class: 'wordmark' }, h('span', { class: 'wm-top', text: 'Onchain' }), h('span', { class: 'wm-main', text: 'Fishing' })),
     ),
-    h('nav', { class: 'topnav', attrs: { 'aria-label': 'Pages' } }, link('pond', 'Pond', '#/'), link('hunt', 'Season Hunt', '#/hunt'), link('tackle', 'Tackle', '#/tackle'), link('cup', 'Tournaments', '#/cup'), link('profile', 'Stats', '#/profile')),
+    h('nav', { class: 'topnav', attrs: { 'aria-label': 'Pages' } }, link('pond', 'Pond', '#/'), link('hunt', 'Season Hunt', '#/hunt'), link('tackle', 'Tackle', '#/tackle'), link('profile', 'Stats', '#/profile')),
     timeSwitch(),
   ];
   if (wait) return [...head, loadingStats(on, shape ?? DEFAULT_SHAPE)];

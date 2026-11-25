@@ -1,7 +1,10 @@
 # Season Hunt
 
 One target fish, one BLEND prize, and the first angler to hook the fish takes all of it. Rods, lures and waters
-change the chance; nothing guarantees it. Tournaments stay as they are, as the second competitive mode.
+change the chance; nothing guarantees it. Seasons are run as **weekly seasons**: three hunts one after another,
+each with its own fish, rules and prize (see [Weekly seasons](#weekly-seasons)). Season Hunt is the game's
+competition; the tournaments of `Tournaments.sol` are kept as they are on the chain and are no longer in the
+navigation (see [Legacy tournaments](#legacy-tournaments)).
 
 This file is the design, the security assessment, the deployment instructions and the list of what must change
 before a public launch. The balance numbers are in [web/SEASON_HUNT_BALANCE.md](web/SEASON_HUNT_BALANCE.md); the
@@ -18,10 +21,10 @@ release 003 (the hook), `SeasonHunt` is at `0xb09eA27cA0B980f4A1031FD19084F8EdA4
 | The hunt: seasons, attempts, the winner, the escrow | `contracts/src/SeasonHunt.sol` (15,455 bytes, a plain contract) |
 | Randomness | `contracts/src/HuntBeacon.sol` (the interface and the block-hash prototype), `contracts/src/DrandBeacon.sol` (drand, verified on chain) |
 | The game's hook | `FishingGame.castFor`, `landFor`, `seasonHunt`, `setSeasonHunt` (+605 bytes) |
-| Scripts | `contracts/script/SeasonHunt.s.sol`, `contracts/script/DrandProbe.sol`, `contracts/script/seasons/*.json` |
-| Tests | `contracts/test/SeasonHunt.t.sol`, `SeasonHunt.invariant.t.sol`, `DrandBeacon.t.sol`, and the hunt cases of `Upgrade.t.sol` |
-| Client | `web/src/game/hunt.ts` (rules), `web/src/play/hunt.ts` (chain), `web/src/play/ui/hunt.ts` (page and pond strip) |
-| Simulation | `web/sim/hunt.ts`, `web/sim/hunt.sim.ts` (`pnpm sim:hunt`) |
+| Scripts | `contracts/script/SeasonHunt.s.sol`, `contracts/script/DrandProbe.sol`, `contracts/script/seasons/*.json`, `contracts/script/seasons/weeks/*.json` (weekly seasons) |
+| Tests | `contracts/test/SeasonHunt.t.sol`, `SeasonHunt.invariant.t.sol`, `SeasonWeek.t.sol`, `DrandBeacon.t.sol`, and the hunt cases of `Upgrade.t.sol` |
+| Client | `web/src/game/hunt.ts` (rules), `web/src/game/week.ts` (weekly seasons), `web/src/play/hunt.ts` (chain), `web/src/play/ui/hunt.ts` (page and pond strip) |
+| Simulation | `web/sim/hunt.ts`, `web/sim/hunt.sim.ts` (`pnpm sim:hunt`); `web/sim/week.ts`, `web/sim/week.sim.ts` (`pnpm sim:week`) |
 
 ## How a season runs
 
@@ -47,6 +50,133 @@ recorded), Winner found, Expired, Cancelled (called off before the start, or nev
 MVP parameters, all of them per-season data and none hardcoded: 7 days, free entry, 20 attempts per wallet and UTC
 day, one winner takes 100%, prize in escrow before the start. A season can also require a minimum level
 (`minLevel`) and restrict the rods that may be used (`rods`), which are the Sybil levers discussed below.
+
+## Weekly seasons
+
+A weekly season is three hunts announced together and fished one after another. **The contract knows nothing of
+weeks and was not changed for them**: each hunt is an ordinary season of `SeasonHunt`, with its own target fish,
+waters, bonus table, dates, escrowed prize, winner, claim and refund. A week is a grouping kept beside the
+contracts, and it decides nothing: when a hunt runs, what it pays, who won and whether the prize was taken are
+read from the contract.
+
+| | Hunt 1 | Hunt 2 | Hunt 3 |
+|---|---|---|---|
+| Suggested days (UTC) | Monday, Tuesday | Wednesday, Thursday | Friday to Sunday |
+| Difficulty | Easy | Medium | Hard |
+| Share of the pool | 20% | 30% | 50% |
+
+All of it is data of the week file: the start, the length, the hours of each hunt, the shares, the fish, the
+waters and every number of the rules. Nothing of the schedule is in the code.
+
+### The data model
+
+| What | Where | Who writes it | What it holds |
+|---|---|---|---|
+| The week file | `contracts/script/seasons/weeks/<id>.json` | the organiser, by hand | `version`, `id`, `title`, `description`, `start` (UTC, `2026-12-07T00:00:00Z`), `days`, `totalPrizeBlend`, `settleWindowSeconds`, and three `hunts`: `name`, `description`, `difficulty`, `startHour`, `durationHours`, `prizeShare`, and the season's rules (`speciesId`, `waters`, `rods`, `minLevel`, `dailyAttempts`, `baseChance`, `maxBonus`, `rodBonus`, `lureBonus`, `waterBonus`) |
+| The hunts | `SeasonHunt` on the chain | `createWeek` | three seasons with consecutive dates; rules final once created |
+| The record | `deployments/weeks/<chainId>/<id>.json` | the script, from the chain | `version`, `id`, `chainId`, `seasonHunt`, `huntIds` (the three on-chain season ids, in order) |
+| The registry | `web/src/generated/weeks.ts` | `pnpm sync`, from the two files above | per chain: the week's id, title, description, dates and `{seasonId, difficulty}` of each hunt |
+
+The format is versioned (`version: 1`); a file or record of another version is refused, not guessed at. The
+client groups the contract's seasons by the registry (`groupWeeks` in `web/src/game/week.ts`). A season that no
+week claims is shown as a week of its own, with one hunt: that is how seasons from before weekly seasons, such as
+"The Stray Taimen", stay on the page with their winners and their claims. A record that names a season the
+contract does not have is shown as "Not on this network" and can never be cast into.
+
+### How a week runs
+
+- **A hunt starts at its own time, and at no other.** When the first fish is hooked on Monday morning, the first
+  hunt is over and the page counts down to Wednesday; the second hunt is not brought forward. Its start is a
+  timestamp in a season that already exists on the chain, so nobody can move it.
+- **Each hunt has its own winner and its own prize.** The three prizes are three escrows, put up before each
+  hunt's start. One angler may win more than one.
+- **No rollover without the sponsor.** A hunt that nobody won pays nobody: its prize stays in the contract until
+  its sponsor takes it back (`reclaim`) or moves it into a later season themselves (`rollOver`, sponsor only). The
+  week tooling does neither.
+- **An unfunded hunt never opens**, as for any season; the other two are not affected.
+
+What a hunt's card says, from the contract's status and the clock (`cardStatus`):
+
+| On the page | Means | In the contract |
+|---|---|---|
+| Upcoming | not started; nobody can cast | Upcoming |
+| Active | casts are taken | Active |
+| Pending finalization | casting is over, or the fish is hooked, and the result can still change | Closing, or Winner found inside its settle window |
+| Winner found | it has a winner for good; the prize is the winner's to claim | Winner found, final |
+| No winner | it ended and nobody hooked the fish; the prize is the sponsor's to take back | Expired |
+| Called off | cancelled, or it started without its prize | Cancelled |
+
+The week itself is Upcoming, Running, Finalizing (the last hunt is waiting for its result) or Over, and the page
+counts down to the next thing that happens in it: the end of the hunt being fished, else the start of the next
+hunt, else a result becoming final.
+
+### Creating and funding a week
+
+Nothing here is run by the application, by a schedule or by a build: an organiser runs these commands, and every
+one that sends a transaction needs the owner's go-ahead. `<id>` is the file's name without `.json`.
+
+1. **Write the week file.** Copy `contracts/script/seasons/weeks/2026-w50.json`, set the `id`, the `start` (in the
+   future, at least ten minutes away when the first hunt is created) and the hunts. Take each hunt's `baseChance`
+   from `cd web && pnpm sim:week` for the crowd expected (see the balance report); `pnpm test` checks the file's
+   shape against the game's content (`validateWeek`).
+2. **Check it against the chain.** Reads only, needs no key.
+   ```bash
+   WEEK=<id> forge script script/SeasonHunt.s.sol --sig "checkWeek()" --rpc-url fluent_testnet
+   ```
+   It refuses a file that does not have exactly three hunts, hunts that overlap, are out of order or leave the
+   week, shares that do not add up to 100, a species, water or rod the game does not have, a settle window the
+   beacon cannot serve, and a hunt that would run while any other live season of the contract does. It prints
+   each hunt's dates and prize, whether it is on the chain already, and the BLEND still to be put up.
+3. **Create the three hunts** (the owner's key). Their rules are final once mined. Refused when the sender does
+   not own the hunt contract, when a hunt still to be created starts in less than ten minutes or more than 60
+   days from now, and by the contract itself for rules it does not take (a chance above its limit among them).
+   ```bash
+   WEEK=<id> forge script script/SeasonHunt.s.sol --sig "createWeek()" --rpc-url fluent_testnet --broadcast --private-key <owner key>
+   ```
+4. **Fund them** (the sponsor's key), before the first hunt starts. This moves BLEND from the sender into escrow:
+   the whole pool, approved for exactly that amount.
+   ```bash
+   WEEK=<id> forge script script/SeasonHunt.s.sol --sig "fundWeek()" --rpc-url fluent_testnet --broadcast --private-key <sponsor key>
+   ```
+   An owner who is also the sponsor can do 3 and 4 in one run with `--sig "announceWeek()"`.
+5. **Record it.** `createWeek`, `fundWeek` and `announceWeek` write `deployments/weeks/<chainId>/<id>.json`
+   themselves; `--sig "recordWeek()"` writes it again from the chain at any time and sends nothing.
+6. **Ship the client.** `cd web && pnpm sync` joins the record and the week file into the registry; commit the
+   record and the registry and publish the web build. Until then the three hunts are on the page as three
+   single seasons, which is correct and merely ungrouped.
+
+**Keys.** The scripts take the key from the command line (`--private-key`, or a keystore with `--account`); it is
+never read from the week file, never written to the record and never printed. Do not put a key in a file of the
+repository.
+
+**Running it twice, and after a failure.** A hunt counts as created when the contract has a season that was not
+called off with exactly the file's rules (compared by the hash of the whole rule set, dates included). `createWeek`
+creates only the hunts that are missing and `fundWeek` funds only the ones with no prize, so a run that stopped
+after the first or second transaction is finished by running the same command again, and a completed week run
+again sends nothing. For the same reason a week file must not be edited after its first hunt is created: the
+edited hunt would no longer be found, and the script refuses it because it overlaps the one already there. To
+change a week that has not started, call its hunts off (`--sig "cancel()"` with `SEASON_ID`, then `reclaim` if
+funded) and announce the corrected file.
+
+**What the client must never do** is take the registry's word over the chain's: a cast is offered only for a hunt
+the contract reports as running and funded (`takesCasts`), and the pond's hunt switch follows that, not the
+calendar of the week file.
+
+### Legacy tournaments
+
+Season Hunt is the game's competition from here on, and **Tournaments** are no longer in the navigation. Nothing
+was removed from the chain or from the build:
+
+- `Tournaments.sol`, its proxy, its state, every result and every prize are untouched. No contract was
+  redeployed, upgraded or reconfigured for this.
+- The page is still there at `#/cup`, titled "Legacy tournaments", and linked from the Season Hunt page. A
+  tournament that is running can be entered and fished there, standings and past results can be read, and a
+  winner can still claim an outstanding prize with the same button as before.
+- Nothing in the application or the tooling opens a tournament by itself, before or after this change;
+  `contracts/new-tournament.sh` is still a command an organiser runs by hand. Stopping to run it is the whole of
+  "no new standard tournaments".
+- The weekly leaderboard stays under **Stats** as "My week", a personal record of the week's catches. It pays
+  nothing and says so.
 
 ## Architecture
 
@@ -326,8 +456,16 @@ report, and change the prize to what the sponsor actually holds.
 
 ## The client
 
-- **Season Hunt** is its own page (`#/hunt`) and the first competition in the navigation; **Tournaments**
-  (`#/cup`) stay where they were, one link over.
+- **Season Hunt** is its own page (`#/hunt`) and the one competition in the navigation (Pond, Season Hunt,
+  Tackle, Stats). It opens on the current weekly season: a header with the week's name, dates, pool, how many
+  hunts are concluded and a countdown to the next thing that happens; three hunt cards with the target, the
+  difficulty, the prize, the days and the status; and the details of the selected hunt (rules, odds with the
+  tackle in hand and with every other choice, the catch while it is being decided, the winner, the claim).
+  Completed weeks are in the archive under it, each with its three results, and a prize that was won and not yet
+  taken is offered at the top of the page whichever week it belongs to.
+- On a development server `?huntDemo=<scene>` (`upcoming`, `monday`, `early`, `midweek`, `friday`, `finalizing`,
+  `over`) shows a made-up week in that state, for looking at the page before a week exists on a chain. It reads
+  nothing from a contract, sends nothing, cannot cast, and is not part of the production build.
 - Fishing for the season happens at the pond. A gold strip under the Cast button is the switch: with the hunt on,
   the button reads "Hunt cast" and turns gold, and the cast goes to `hunt.cast` instead of `game.cast`. Everything
   after it (the bite, the reel, the catch card) is the ordinary flow, because it is an ordinary cast.
@@ -383,7 +521,17 @@ A hunt with a prize of real value needs all of these; none is done, and one (the
 - `UpgradeFork.t.sol` (`FORK_RPC=fluent_testnet`, part of `./preflight.sh fluent_testnet`): the upgrade, the
   hunt's deployment by its script, a season from the season file funded with the network's own BLEND, a cast, a
   real drand round, the prize and the trophy, on a fork of the live network.
-- `web`: `src/game/hunt.test.ts` (the chance arithmetic against the contract's numbers, the drand round of a cast).
+- `SeasonWeek.t.sol`: the week tooling on a local chain. The week file's shape and its refusals (two or four
+  hunts, overlapping hunts, shares, a species, water or rod the game does not have, a start too close, another
+  season in the way); creating and funding three hunts; a second run that sends nothing; a run
+  that failed part-way and is finished by repeating it; an edited file; owner-only creation; three hunts with
+  three results, an early winner that does not start the next hunt, one angler winning two, an unfunded hunt
+  that never runs, and roll-over by the sponsor only.
+- `web`: `src/game/hunt.test.ts` (the chance arithmetic against the contract's numbers, the drand round of a cast),
+  `src/game/week.test.ts` (the week file's validation, grouping by the registry, every card and week status, the
+  countdown, the archive, claims, seasons from before weekly seasons, a registry that disagrees with the chain),
+  `sim/week.test.ts` (the week simulation, and that the week file's base chances are the fitted ones),
+  `src/play/routes.test.ts` (the navigation without Tournaments, the legacy page still routed).
 
 ### Rehearsals
 

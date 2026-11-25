@@ -33,6 +33,20 @@ import {DrandBeacon} from "../src/DrandBeacon.sol";
 ///                SEASON_ID=0 forge script script/SeasonHunt.s.sol --sig "cancel()" --rpc-url <rpc> --broadcast --private-key <owner>
 ///           reclaim: the sponsor takes back the prize of a season that was called off or ended with no winner.
 ///                SEASON_ID=0 forge script script/SeasonHunt.s.sol --sig "reclaim()" --rpc-url <rpc> --broadcast --private-key <sponsor>
+///
+///         A weekly season is three hunts announced together from one file (script/seasons/weeks/<id>.json):
+///         three seasons of this contract, one after another, each with its own fish, rules and prize.
+///           checkWeek: reads the file, checks it against the chain and prints what would be done; sends nothing.
+///                WEEK=2026-w50 forge script script/SeasonHunt.s.sol --sig "checkWeek()" --rpc-url <rpc>
+///           createWeek: announces the hunts of the week that are not on the chain yet. Run it again after a
+///              failure: a hunt that exists with exactly these rules is found and never created twice.
+///                WEEK=2026-w50 forge script script/SeasonHunt.s.sol --sig "createWeek()" --rpc-url <rpc> --broadcast --private-key <owner>
+///           fundWeek: the sender puts up the prizes of the week's hunts that have none yet. This moves BLEND.
+///                WEEK=2026-w50 forge script script/SeasonHunt.s.sol --sig "fundWeek()" --rpc-url <rpc> --broadcast --private-key <sponsor>
+///           announceWeek: both in one run, for an owner who is also the sponsor.
+///           recordWeek: writes deployments/weeks/<chainId>/<id>.json from the chain; sends nothing.
+///         The record is what the client groups the three hunts by (web: `pnpm sync`). See SEASON_HUNT.md.
+///
 ///           detach: the game stops taking casts from any hunt, at once. Prizes already won are still paid; the
 ///              trophy fish of a winner waits until a hunt is attached again.
 ///                forge script script/SeasonHunt.s.sol --sig "detach()" --rpc-url <rpc> --broadcast --private-key <owner>
@@ -202,6 +216,316 @@ contract SeasonHuntScript is Script {
         require(address(hunt.fishNft()) == address(game.fishNft()), "the hunt mints into another fish contract");
         game.setSeasonHunt(address(hunt));
         require(game.seasonHunt() == address(hunt), "not as set");
+    }
+
+    // ------------------------------------------------------------------ a weekly season
+
+    uint256 internal constant HUNTS_PER_WEEK = 3;
+
+    /// @dev A week file, read and checked, and what the chain already has of it.
+    struct Week {
+        string id;
+        string title;
+        uint256 start;
+        uint256 end;
+        uint256 total; // BLEND of the three hunts together, in the token's units
+        SeasonHunt.Rules[] rules;
+        bool[] exists; // the chain has a season with exactly these rules
+        uint256[] ids; // its id, when it exists
+    }
+
+    function checkWeek() external view {
+        SeasonHunt hunt = _hunt();
+        _printWeek(hunt, weekOnChain(hunt, vm.envString("WEEK")));
+    }
+
+    function createWeek() external {
+        SeasonHunt hunt = _hunt();
+        Week memory w = weekOnChain(hunt, vm.envString("WEEK"));
+        vm.startBroadcast();
+        _createWeek(hunt, w);
+        vm.stopBroadcast();
+        _recordWeek(hunt, w);
+        _printWeek(hunt, w);
+        console2.log("not funded hunts take no casts. next: WEEK=", w.id, " --sig \"fundWeek()\"");
+    }
+
+    function fundWeek() external {
+        SeasonHunt hunt = _hunt();
+        Week memory w = weekOnChain(hunt, vm.envString("WEEK"));
+        vm.startBroadcast();
+        _fundWeek(hunt, w);
+        vm.stopBroadcast();
+        _recordWeek(hunt, w);
+        _printWeek(hunt, w);
+        console2.log("in escrow, wei      ", hunt.escrowed());
+    }
+
+    function announceWeek() external {
+        SeasonHunt hunt = _hunt();
+        Week memory w = weekOnChain(hunt, vm.envString("WEEK"));
+        vm.startBroadcast();
+        _createWeek(hunt, w);
+        _fundWeek(hunt, w);
+        vm.stopBroadcast();
+        _recordWeek(hunt, w);
+        _printWeek(hunt, w);
+        console2.log("in escrow, wei      ", hunt.escrowed());
+    }
+
+    function recordWeek() external {
+        SeasonHunt hunt = _hunt();
+        Week memory w = weekOnChain(hunt, vm.envString("WEEK"));
+        for (uint256 i; i < w.rules.length; i++) require(w.exists[i], "a hunt of this week is not on the chain: createWeek first");
+        _recordWeek(hunt, w);
+        _printWeek(hunt, w);
+    }
+
+    /// @notice Creating and funding a week as `owner_` and `sponsor_` would, without broadcasting and without
+    ///         writing the record: for the tests and for a fork rehearsal. A zero address skips that step.
+    function rehearseWeek(SeasonHunt hunt, string calldata json, address owner_, address sponsor_)
+        external
+        returns (uint256[] memory ids)
+    {
+        Week memory w = weekOnChain(hunt, weekFrom(json, IERC20Metadata(address(hunt.blend())).decimals()));
+        if (owner_ != address(0)) {
+            vm.startPrank(owner_);
+            _createWeek(hunt, w);
+            vm.stopPrank();
+        }
+        if (sponsor_ != address(0)) {
+            vm.startPrank(sponsor_);
+            _fundWeek(hunt, w);
+            vm.stopPrank();
+        }
+        return w.ids;
+    }
+
+    function weekFile(string memory name) public view returns (string memory) {
+        return vm.readFile(string.concat(vm.projectRoot(), "/script/seasons/weeks/", name, ".json"));
+    }
+
+    /// @notice The week written in script/seasons/weeks/<name>.json, checked against the chain: which of its hunts
+    ///         exist already, and that nothing stands in the way of the others.
+    function weekOnChain(SeasonHunt hunt, string memory name) public view returns (Week memory w) {
+        w = weekFrom(weekFile(name), IERC20Metadata(address(hunt.blend())).decimals());
+        require(keccak256(bytes(w.id)) == keccak256(bytes(name)), "the file's id is not its name");
+        return weekOnChain(hunt, w);
+    }
+
+    function weekOnChain(SeasonHunt hunt, Week memory w) public view returns (Week memory) {
+        FishingGame game = hunt.game();
+        uint256 species = hunt.fishNft().speciesCount();
+        uint256 locations = game.locationCount();
+        uint256 rods = game.rodCount();
+        uint256 delay = hunt.beacon().delay();
+        uint256 n = hunt.count();
+        for (uint256 i; i < w.rules.length; i++) {
+            SeasonHunt.Rules memory r = w.rules[i];
+            string memory at = string.concat("hunt ", vm.toString(i + 1), ": ");
+            require(r.speciesId < species, string.concat(at, "its species is not in the game"));
+            require(r.waters >> locations == 0, string.concat(at, "a water that is not in the game"));
+            require(r.rods >> rods == 0, string.concat(at, "a rod that is not in the game"));
+            require(r.settleWindow > delay, string.concat(at, "the settle window is not longer than the beacon's delay"));
+            bytes32 want = keccak256(abi.encode(r));
+            for (uint256 id; id < n; id++) {
+                SeasonHunt.Season memory s = hunt.season(id);
+                if (!s.cancelled && keccak256(abi.encode(s.rules)) == want) {
+                    require(!w.exists[i], string.concat(at, "the chain has it twice"));
+                    (w.exists[i], w.ids[i]) = (true, id);
+                }
+            }
+        }
+        // a hunt of the week must not run while another season does: the pond fishes one hunt at a time
+        for (uint256 id; id < n; id++) {
+            SeasonHunt.Season memory s = hunt.season(id);
+            bool own;
+            for (uint256 i; i < w.rules.length; i++) own = own || (w.exists[i] && w.ids[i] == id);
+            // a season called off, or one that started without its prize, takes no casts
+            if (own || s.cancelled || (s.sponsor == address(0) && block.timestamp >= s.rules.start)) continue;
+            for (uint256 i; i < w.rules.length; i++) {
+                require(
+                    s.rules.end <= w.rules[i].start || s.rules.start >= w.rules[i].end,
+                    string.concat("hunt ", vm.toString(i + 1), " runs while season ", vm.toString(id), " does (", s.rules.name, ")")
+                );
+            }
+        }
+        return w;
+    }
+
+    /// @notice A week file, read and checked for everything that can be checked without a chain: exactly three
+    ///         hunts, in order and not overlapping, inside the week, with prize shares that add up to the pool.
+    function weekFrom(string memory json, uint8 decimals) public view returns (Week memory w) {
+        require(vm.parseJsonUint(json, ".version") == 1, "version must be 1");
+        w.id = vm.parseJsonString(json, ".id");
+        w.title = vm.parseJsonString(json, ".title");
+        require(bytes(w.id).length != 0 && bytes(w.id).length <= 40 && bytes(w.title).length != 0, "id and title are needed");
+        w.start = unixOf(vm.parseJsonString(json, ".start"));
+        uint256 daysLong = vm.parseJsonUint(json, ".days");
+        require(daysLong >= 1 && daysLong <= 31, "days must be 1 to 31");
+        w.end = w.start + daysLong * 1 days;
+        uint256 pool = vm.parseJsonUint(json, ".totalPrizeBlend");
+        require(pool != 0 && pool <= 1e12, "totalPrizeBlend must be above zero");
+        uint256 settle = vm.parseJsonUint(json, ".settleWindowSeconds");
+        require(vm.keyExistsJson(json, ".hunts[2]") && !vm.keyExistsJson(json, ".hunts[3]"), "a week is exactly three hunts");
+
+        w.rules = new SeasonHunt.Rules[](HUNTS_PER_WEEK);
+        w.exists = new bool[](HUNTS_PER_WEEK);
+        w.ids = new uint256[](HUNTS_PER_WEEK);
+        uint256 shares;
+        uint256 prev = w.start;
+        for (uint256 i; i < HUNTS_PER_WEEK; i++) {
+            string memory k = string.concat(".hunts[", vm.toString(i), "]");
+            string memory at = string.concat("hunt ", vm.toString(i + 1), ": ");
+            bytes32 difficulty = keccak256(bytes(vm.parseJsonString(json, string.concat(k, ".difficulty"))));
+            require(
+                difficulty == keccak256("easy") || difficulty == keccak256("medium") || difficulty == keccak256("hard"),
+                string.concat(at, "difficulty must be easy, medium or hard")
+            );
+            uint256 share = vm.parseJsonUint(json, string.concat(k, ".prizeShare"));
+            require(share != 0 && share <= 100, string.concat(at, "prizeShare must be 1 to 100"));
+            shares += share;
+            SeasonHunt.Rules memory r = _rulesAt(json, k);
+            r.start = uint40(w.start + vm.parseJsonUint(json, string.concat(k, ".startHour")) * 1 hours);
+            r.end = uint40(r.start + vm.parseJsonUint(json, string.concat(k, ".durationHours")) * 1 hours);
+            r.settleWindow = uint32(settle);
+            r.prize = uint96((pool * 10 ** decimals * share) / 100);
+            require(r.end > r.start, string.concat(at, "durationHours must be above zero"));
+            require(r.start >= prev, string.concat(at, "starts before the hunt before it ends: hunts do not overlap and are listed in order"));
+            require(r.end <= w.end, string.concat(at, "ends after the week does"));
+            require(r.waters != 0 && r.dailyAttempts != 0 && r.baseChance != 0, string.concat(at, "waters, dailyAttempts and baseChance are needed"));
+            require(settle >= 60 && settle <= 7 days, "settleWindowSeconds must be between a minute and seven days");
+            require(
+                (uint256(r.baseChance) * (100 + uint256(r.maxBonus))) / 100 <= 1e8,
+                string.concat(at, "with the best tackle an attempt would be more likely than one in ten")
+            );
+            prev = r.end;
+            w.total += r.prize;
+            w.rules[i] = r;
+        }
+        require(shares == 100, "the prize shares do not add up to 100");
+        require(w.total == pool * 10 ** decimals, "the prizes do not add up to the pool");
+    }
+
+    function _createWeek(SeasonHunt hunt, Week memory w) internal {
+        (, address sender,) = vm.readCallers();
+        require(hunt.owner() == sender, "the sender does not own the hunt");
+        for (uint256 i; i < w.rules.length; i++) {
+            if (w.exists[i]) continue;
+            SeasonHunt.Rules memory r = w.rules[i];
+            string memory at = string.concat("hunt ", vm.toString(i + 1), ": ");
+            require(r.start >= block.timestamp + 10 minutes, string.concat(at, "starts in less than ten minutes: the prize must be in before it"));
+            require(r.start <= block.timestamp + 60 days, string.concat(at, "starts more than 60 days from now"));
+            (w.exists[i], w.ids[i]) = (true, hunt.create(r));
+        }
+    }
+
+    function _fundWeek(SeasonHunt hunt, Week memory w) internal {
+        (, address sender,) = vm.readCallers();
+        IERC20 blend = hunt.blend();
+        uint256 need;
+        bool[] memory due = new bool[](w.rules.length);
+        for (uint256 i; i < w.rules.length; i++) {
+            string memory at = string.concat("hunt ", vm.toString(i + 1), ": ");
+            require(w.exists[i], string.concat(at, "is not on the chain: createWeek first"));
+            if (hunt.season(w.ids[i]).sponsor != address(0)) continue;
+            require(block.timestamp < w.rules[i].start, string.concat(at, "has started without its prize and never ran"));
+            due[i] = true;
+            need += w.rules[i].prize;
+        }
+        if (need == 0) return;
+        require(blend.balanceOf(sender) >= need, "the sender does not hold the prizes that are still due");
+        blend.approve(address(hunt), need);
+        for (uint256 i; i < w.rules.length; i++) {
+            if (due[i]) hunt.fund(w.ids[i]);
+        }
+    }
+
+    /// @dev deployments/weeks/<chainId>/<id>.json: which seasons of which hunt contract the week's hunts are.
+    ///      Written from this run's own view of the chain. When a broadcast fails half way the file may name a
+    ///      season that was not created: run the same command again, or recordWeek().
+    function _recordWeek(SeasonHunt hunt, Week memory w) internal {
+        string memory dir = string.concat(vm.projectRoot(), "/../deployments/weeks/", vm.toString(block.chainid));
+        vm.createDir(dir, true);
+        string memory k = "week";
+        vm.serializeUint(k, "version", 1);
+        vm.serializeString(k, "id", w.id);
+        vm.serializeUint(k, "chainId", block.chainid);
+        vm.serializeAddress(k, "seasonHunt", address(hunt));
+        vm.writeJson(vm.serializeUint(k, "huntIds", w.ids), string.concat(dir, "/", w.id, ".json"));
+    }
+
+    function _printWeek(SeasonHunt hunt, Week memory w) internal view {
+        console2.log("week                ", w.id, w.title);
+        console2.log("starts              ", w.start);
+        console2.log("ends                ", w.end);
+        console2.log("prize pool, wei     ", w.total);
+        uint256 due;
+        for (uint256 i; i < w.rules.length; i++) {
+            SeasonHunt.Rules memory r = w.rules[i];
+            console2.log("  hunt", i + 1, r.name);
+            console2.log("    from", r.start, "to", r.end);
+            console2.log("    prize, wei", r.prize);
+            if (!w.exists[i]) {
+                console2.log("    not on the chain yet");
+                due += r.prize;
+            } else if (w.ids[i] < hunt.count() && hunt.season(w.ids[i]).sponsor != address(0)) {
+                console2.log("    season", w.ids[i], "funded");
+            } else {
+                console2.log("    season", w.ids[i], "NOT FUNDED");
+                due += r.prize;
+            }
+        }
+        console2.log("still to fund, wei  ", due);
+    }
+
+    /// @notice Unix seconds of a UTC time written as `2026-12-07T00:00:00Z`, in exactly that form.
+    function unixOf(string memory iso) public pure returns (uint256) {
+        bytes memory b = bytes(iso);
+        require(
+            b.length == 20 && b[4] == "-" && b[7] == "-" && b[10] == "T" && b[13] == ":" && b[16] == ":" && b[19] == "Z",
+            "start must look like 2026-12-07T00:00:00Z"
+        );
+        uint256 y = _digits(b, 0, 4);
+        uint256 m = _digits(b, 5, 2);
+        uint256 d = _digits(b, 8, 2);
+        uint256 hh = _digits(b, 11, 2);
+        uint256 mi = _digits(b, 14, 2);
+        uint256 ss = _digits(b, 17, 2);
+        bool leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+        uint256 inMonth = m == 2 ? (leap ? 29 : 28) : (m == 4 || m == 6 || m == 9 || m == 11) ? 30 : 31;
+        require(y >= 1970 && m >= 1 && m <= 12 && d >= 1 && d <= inMonth && hh < 24 && mi < 60 && ss < 60, "start is not a date");
+        // days from the civil date
+        uint256 yy = m <= 2 ? y - 1 : y;
+        uint256 era = yy / 400;
+        uint256 yoe = yy - era * 400;
+        uint256 doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+        uint256 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        return (era * 146_097 + doe - 719_468) * 1 days + hh * 1 hours + mi * 1 minutes + ss;
+    }
+
+    function _digits(bytes memory b, uint256 from, uint256 n) internal pure returns (uint256 x) {
+        for (uint256 i = from; i < from + n; i++) {
+            uint8 c = uint8(b[i]);
+            require(c >= 48 && c <= 57, "start must look like 2026-12-07T00:00:00Z");
+            x = x * 10 + (c - 48);
+        }
+    }
+
+    /// @dev What a hunt of a week file and a season file have in common, read from under `k`.
+    function _rulesAt(string memory json, string memory k) internal pure returns (SeasonHunt.Rules memory r) {
+        r.name = vm.parseJsonString(json, string.concat(k, ".name"));
+        r.description = vm.parseJsonString(json, string.concat(k, ".description"));
+        r.speciesId = uint16(vm.parseJsonUint(json, string.concat(k, ".speciesId")));
+        r.waters = _mask(vm.parseJsonUintArray(json, string.concat(k, ".waters")));
+        r.rods = _mask(vm.parseJsonUintArray(json, string.concat(k, ".rods")));
+        r.minLevel = uint8(vm.parseJsonUint(json, string.concat(k, ".minLevel")));
+        r.dailyAttempts = uint16(vm.parseJsonUint(json, string.concat(k, ".dailyAttempts")));
+        r.baseChance = uint32(vm.parseJsonUint(json, string.concat(k, ".baseChance")));
+        r.maxBonus = uint16(vm.parseJsonUint(json, string.concat(k, ".maxBonus")));
+        r.rodBonus = _row(vm.parseJsonUintArray(json, string.concat(k, ".rodBonus")));
+        r.lureBonus = _row(vm.parseJsonUintArray(json, string.concat(k, ".lureBonus")));
+        r.waterBonus = _row(vm.parseJsonUintArray(json, string.concat(k, ".waterBonus")));
     }
 
     /// @notice The rules written in script/seasons/<name>.json, for a season that starts at `start`.

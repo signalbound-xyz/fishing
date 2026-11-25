@@ -18,6 +18,7 @@
     "sim:audit": "vitest run --config vitest.sim.config.ts sim/audit.sim.ts",
     "sim:daily": "vitest run --config vitest.sim.config.ts sim/daily.sim.ts",
     "sim:hunt": "vitest run --config vitest.sim.config.ts sim/hunt.sim.ts",
+    "sim:week": "vitest run --config vitest.sim.config.ts sim/week.sim.ts",
     "live": "vitest run --config vitest.live.config.ts live/cup.live.ts",
     "live:read": "vitest run --config vitest.live.config.ts live/chain.live.ts"
   },

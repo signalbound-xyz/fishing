@@ -70,6 +70,58 @@ export function shareText(p: number): string {
   return `${Math.round(pct)}%`;
 }
 
+// ------------------------------------------------------------------ a season, as the client holds it
+
+/** One seasonal cast, as the contract keeps it. */
+export interface HuntAttempt {
+  player: Address;
+  /** Its number in the season: lower is earlier. */
+  seq: number;
+  blockNumber: bigint;
+  /** The timestamp of the cast's block, unix seconds. */
+  time: number;
+  rod: number;
+  /** Lure id, or null for a bare hook. */
+  lure: number | null;
+  water: number;
+}
+
+export interface HuntSeason {
+  id: number;
+  name: string;
+  description: string;
+  /** Unix seconds. */
+  start: number;
+  end: number;
+  speciesId: number;
+  /** Location ids where the target can be hooked. */
+  waters: number[];
+  /** Rod ids that may be used; empty = any rod. */
+  rods: number[];
+  minLevel: number;
+  dailyAttempts: number;
+  /** Seconds after a cast in which its hit can be recorded. */
+  settleWindow: number;
+  odds: HuntOdds;
+  /** BLEND, all of it to the winner. */
+  prize: number;
+  /** Who put the prize up; null while it is not in. */
+  sponsor: Address | null;
+  /** The contract's own status at the time of reading; `statusNow` keeps it current between reads. */
+  status: HuntStatus;
+  /** When the recorded hit stands for good, or when a season without one expires. */
+  finalAt: number;
+  attempts: number;
+  /** The attempt that holds the catch. */
+  winner: HuntAttempt | null;
+  paid: boolean;
+  returned: boolean;
+  /** The winner's trophy fish; 0n while it is not minted. */
+  trophyId: bigint;
+  /** Seasonal casts the connected player has left today. */
+  attemptsLeft: number;
+}
+
 // ------------------------------------------------------------------ the draw of an attempt
 
 /** What decides one attempt, besides its chance: SeasonHunt._roll. */

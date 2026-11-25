@@ -451,26 +451,32 @@ contract UpgradeFromReleaseTest is TournamentsBase {
     }
 
     /// @dev The game counts its casts in the water since release 004. A cast made on earlier code is not in the
-    ///      count: reeling it in must not take one off, and it does not hold the rules. Every later cast is counted.
-    function test_aCastMadeBeforeTheCountIsNotCounted() public {
+    ///      count: reeling it in must not take one off, and it does not hold the rules. A cast made on a release
+    ///      that counts is in the count, stays in it across the upgrade and leaves it when reeled in. Whichever
+    ///      the latest release is, every later cast is counted.
+    function test_theCountOfCastsInTheWaterAcrossTheUpgrade() public {
         uint64 target = _castOf(erin).targetBlock;
         assertGt(target, 0);
+        (bool counts, bytes memory out) = address(game).staticcall(abi.encodeWithSignature("castsInWater()"));
+        uint256 before = counts ? abi.decode(out, (uint256)) : 0;
+        if (counts) assertGt(before, 0, "the released game did not count the cast in its water");
         _upgrade();
-        assertEq(game.castsInWater(), 0, "a cast of the old code is counted");
-        assertFalse(_castOf(erin).counted);
+        assertEq(game.castsInWater(), before, "the upgrade moved the count");
+        assertEq(_castOf(erin).counted, counts);
         assertFalse(game.castingPaused(), "the upgrade paused the game");
 
         vm.roll(target + 1);
         game.reelFor(erin);
-        assertEq(game.castsInWater(), 0, "reeling in an uncounted cast moved the count");
+        assertEq(game.castsInWater(), counts ? before - 1 : 0, "reeling in the old cast moved the count wrongly");
 
+        uint256 base = game.castsInWater();
         vm.prank(erin);
         game.cast(0);
-        assertEq(game.castsInWater(), 1);
+        assertEq(game.castsInWater(), base + 1);
         assertTrue(_castOf(erin).counted);
         vm.roll(_castOf(erin).targetBlock + 1);
         game.reelFor(erin);
-        assertEq(game.castsInWater(), 0);
+        assertEq(game.castsInWater(), base);
     }
 
     /// @dev Release 004 took five getters out of the game; the lens reads the same storage by slot instead. Here

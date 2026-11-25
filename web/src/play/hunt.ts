@@ -10,10 +10,12 @@
 import { formatEther, parseAbi, parseEventLogs, toEventSelector, pad, type AbiEvent, type Address, type Hex, type TransactionReceipt } from 'viem';
 import { seasonHuntAbi } from '../abi';
 import { publicClient } from '../clients';
-import { deployment } from '../config';
+import { CHAIN_ID, deployment } from '../config';
 import { revertName } from '../errors';
 import { SPECIES } from '../game/content';
-import { HUNT_STATUS, chanceOf, drandRound, drandTime, idsOf, levelOfXp, type DrandNet, type HuntOdds, type HuntStatus } from '../game/hunt';
+import { HUNT_STATUS, chanceOf, drandRound, drandTime, idsOf, levelOfXp, type DrandNet, type HuntAttempt, type HuntSeason, type HuntStatus } from '../game/hunt';
+import { currentWeek, finalAt, groupWeeks, statusAt, type WeekEntry, type WeekView } from '../game/week';
+import { weeks as weekRegistry } from '../generated/weeks';
 import type { Save } from '../game/types';
 import { emit, state } from '../store';
 import { LURES, RODS } from '../tackle/catalog';
@@ -23,6 +25,15 @@ import { toast } from '../ui/toast';
 const zero = '0x0000000000000000000000000000000000000000' as Address;
 export const HUNT_DEPLOYED = !!deployment?.seasonHunt;
 const hunt = { address: deployment?.seasonHunt ?? zero, abi: seasonHuntAbi } as const;
+export type { HuntAttempt, HuntSeason };
+
+/**
+ * A preview of the page with made-up seasons, on a development server only: `?huntDemo=monday` (or `upcoming`,
+ * `early`, `midweek`, `friday`, `finalizing`, `over`). Nothing is read from the hunt contract and nothing is sent
+ * to it. The production build has no such switch.
+ */
+const DEMO: string | null = import.meta.env.DEV && typeof location !== 'undefined' ? new URLSearchParams(location.search).get('huntDemo') : null;
+export const HUNT_DEMO = !!DEMO;
 
 const beaconAbi = parseAbi([
   'function scheme() view returns (string)',
@@ -32,56 +43,6 @@ const beaconAbi = parseAbi([
   'function period() view returns (uint256)',
   'function margin() view returns (uint256)',
 ]);
-
-/** One seasonal cast, as the contract keeps it. */
-export interface HuntAttempt {
-  player: Address;
-  /** Its number in the season: lower is earlier. */
-  seq: number;
-  blockNumber: bigint;
-  /** The timestamp of the cast's block, unix seconds. */
-  time: number;
-  rod: number;
-  /** Lure id, or null for a bare hook. */
-  lure: number | null;
-  water: number;
-}
-
-export interface HuntSeason {
-  id: number;
-  name: string;
-  description: string;
-  /** Unix seconds. */
-  start: number;
-  end: number;
-  speciesId: number;
-  /** Location ids where the target can be hooked. */
-  waters: number[];
-  /** Rod ids that may be used; empty = any rod. */
-  rods: number[];
-  minLevel: number;
-  dailyAttempts: number;
-  /** Seconds after a cast in which its hit can be recorded. */
-  settleWindow: number;
-  odds: HuntOdds;
-  /** BLEND, all of it to the winner. */
-  prize: number;
-  /** Who put the prize up; null while it is not in. */
-  sponsor: Address | null;
-  /** The contract's own status at the time of reading; `statusNow` keeps it current between reads. */
-  status: HuntStatus;
-  /** When the recorded hit stands for good, or when a season without one expires. */
-  finalAt: number;
-  attempts: number;
-  /** The attempt that holds the catch. */
-  winner: HuntAttempt | null;
-  paid: boolean;
-  returned: boolean;
-  /** The winner's trophy fish; 0n while it is not minted. */
-  trophyId: bigint;
-  /** Seasonal casts the connected player has left today. */
-  attemptsLeft: number;
-}
 
 /** Where the hunt takes its randomness from. */
 export interface Beacon {
@@ -112,12 +73,16 @@ export interface LastAttempt {
   season: number;
   seq: number;
   result: AttemptResult;
+  /** Whose cast it was: another account signed in on this page is not told about it. */
+  player: Address;
 }
 
 export const hunts = {
   list: [] as HuntSeason[],
   /** Seasons the contract holds; `list` has the newest of them. */
   total: 0,
+  /** The weekly seasons of this network: which seasons are the three hunts of each (src/generated/weeks.ts). */
+  entries: (weekRegistry[String(CHAIN_ID)] ?? []) as readonly WeekEntry[],
   loaded: false,
   failed: false,
   /** Chain time minus this device's time, in seconds. */
@@ -133,7 +98,8 @@ export const hunts = {
   rev: 0,
 };
 
-const PAGE = 6;
+// a week is three seasons: a page holds the weeks of several months
+const PAGE = 60;
 let shown = PAGE;
 
 /** The chain's clock, unix seconds. */
@@ -183,16 +149,16 @@ export function armHunt(on: boolean): void {
 // ------------------------------------------------------------------ reading
 
 /** A season's state at this moment: the contract's status, moved on by the clock between reads. */
-export function statusNow(s: HuntSeason, now = huntNow()): HuntStatus {
-  if (s.status === 'cancelled' || s.status === 'winner' || s.status === 'expired') return s.status;
-  if (now < s.start) return 'upcoming';
-  if (!s.sponsor) return 'cancelled';
-  if (now < s.end) return 'active';
-  return now <= s.end + s.settleWindow ? 'closing' : 'expired';
-}
+export const statusNow = (s: HuntSeason, now = huntNow()): HuntStatus => statusAt(s, now);
 
 /** Nothing can change who won any more. */
-export const isFinal = (s: HuntSeason, now = huntNow()): boolean => (s.winner ? now > s.finalAt : statusNow(s, now) === 'expired');
+export const isFinal = (s: HuntSeason, now = huntNow()): boolean => finalAt(s, now);
+
+/** The seasons as the page shows them: grouped into weekly seasons, newest first (game/week.ts). */
+export const weeksNow = (now = huntNow()): WeekView<HuntSeason>[] => groupWeeks(hunts.entries, hunts.list, now);
+
+/** The weekly season the page opens on. */
+export const weekNow = (now = huntNow()): WeekView<HuntSeason> | null => currentWeek(weeksNow(now), now);
 
 let beaconRead: Promise<void> | null = null;
 function readBeacon(): Promise<void> {
@@ -223,6 +189,11 @@ const lureOf = (recorded: number): number | null => (recorded === 0 ? null : rec
 export async function loadHunts(): Promise<void> {
   if (!HUNT_DEPLOYED) return;
   const me = state.wallet?.address ?? zero;
+  if (DEMO) {
+    const demo = (await import('../game/fixtures/weekDemo')).demoWeeks(DEMO, Date.now() / 1000, state.wallet?.address ?? null);
+    Object.assign(hunts, { list: demo.seasons, entries: demo.entries, total: demo.seasons.length, loaded: true, failed: false, skew: 0, beacon: { scheme: 'drand', unbiasable: true, drand: null } });
+    return changed();
+  }
   try {
     const [[views, total, time]] = await Promise.all([publicClient.readContract({ ...hunt, functionName: 'list', args: [me, 0n, BigInt(shown)] }), readBeacon()]);
     hunts.skew = Number(time) - Date.now() / 1000;
@@ -271,15 +242,6 @@ export function showMoreHunts(): Promise<void> {
   return loadHunts();
 }
 
-/** The season the page opens on: the one being fished, else the one about to end or start, else the newest. */
-export function featuredHunt(): HuntSeason | null {
-  const now = huntNow();
-  const by = (st: HuntStatus): HuntSeason | undefined => hunts.list.find((s) => statusNow(s, now) === st);
-  const pendingWinner = hunts.list.find((s) => s.winner && !isFinal(s, now));
-  const upcoming = hunts.list.filter((s) => statusNow(s, now) === 'upcoming').sort((a, b) => a.start - b.start)[0];
-  return by('active') ?? pendingWinner ?? by('closing') ?? upcoming ?? hunts.list[0] ?? null;
-}
-
 /** The season that takes casts right now, if any. */
 export const activeHunt = (): HuntSeason | null => hunts.list.find((s) => statusNow(s) === 'active') ?? null;
 
@@ -313,7 +275,7 @@ export function huntBlocker(s: HuntSeason, save: Save, water = save.location): s
 
 /** The season the next cast at the player's water counts for: the player armed the hunt and nothing is in the way. */
 export function huntCastFor(save: Save): HuntSeason | null {
-  if (!HUNT_DEPLOYED || !hunts.armed || !state.wallet) return null;
+  if (!HUNT_DEPLOYED || DEMO || !hunts.armed || !state.wallet) return null;
   const s = activeHunt();
   return s && huntBlocker(s, save) === null ? s : null;
 }
@@ -324,6 +286,10 @@ async function write(label: string, functionName: 'cast' | 'settle' | 'claim' | 
   const w = state.wallet;
   if (!w) {
     toast('Connect with Fluent to play', 'info');
+    return undefined;
+  }
+  if (DEMO) {
+    toast('This is a preview of the page: nothing is sent to the contract.', 'info');
     return undefined;
   }
   try {
@@ -400,7 +366,7 @@ function track(p: PendingAttempt): void {
 function drop(p: PendingAttempt, result: AttemptResult | null): void {
   hunts.pending = hunts.pending.filter((x) => keyOf(x) !== keyOf(p));
   remember();
-  if (result && p.player.toLowerCase() === state.wallet?.address.toLowerCase()) hunts.last = { season: p.season, seq: p.seq, result };
+  if (result && p.player.toLowerCase() === state.wallet?.address.toLowerCase()) hunts.last = { season: p.season, seq: p.seq, result, player: p.player };
   changed();
 }
 
@@ -529,7 +495,7 @@ const SEASON_CAST = toEventSelector(seasonHuntAbi.find((x) => x.type === 'event'
  */
 export async function recoverAttempts(): Promise<void> {
   const me = state.wallet?.address;
-  if (!HUNT_DEPLOYED || !me) return;
+  if (!HUNT_DEPLOYED || DEMO || !me) return;
   const now = huntNow();
   const open = hunts.list.filter((s) => s.sponsor && now >= s.start && now <= s.end + s.settleWindow && !(s.winner && now > s.finalAt));
   for (const s of open) {

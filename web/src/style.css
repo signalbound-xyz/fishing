@@ -4681,6 +4681,320 @@ button.link {
   font-variant-numeric: tabular-nums;
 }
 
+/* ------------------------------------------------------------ the weekly season: header, three hunts, archive */
+.hunt-note {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.hunt-week {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--hunt-line);
+}
+.hunt-week h2 {
+  font-size: 26px;
+}
+.hunt-week-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.hunt-fact {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  min-width: 0;
+}
+.hunt-fact .k {
+  font: 600 11px/1.2 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.hunt-fact .v {
+  font: 400 17px/1.15 var(--font-px);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.hunt-fact .v small {
+  font: 600 11px/1 var(--font-body);
+  color: var(--muted);
+}
+.hunt-fact .d {
+  font-size: 12px;
+  color: var(--muted);
+}
+.hunt-fact.dates .v {
+  font-size: 15px;
+}
+.hunt-fact.pool {
+  box-shadow: inset 0 0 0 1px var(--hunt-line);
+}
+.hunt-fact.pool .v {
+  color: var(--r4);
+}
+.hunt-fact.warn .d {
+  color: var(--warn);
+}
+.hunt-fact.next .v {
+  color: var(--accent-hi);
+}
+.hunt-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.hunt-dots i {
+  width: 12px;
+  height: 12px;
+  background: var(--panel-3);
+  box-shadow: inset 0 0 0 2px var(--line);
+}
+.hunt-dots i.now {
+  box-shadow: inset 0 0 0 2px var(--ok);
+}
+.hunt-dots i.done {
+  background: var(--r4);
+  box-shadow: none;
+}
+.hunt-dots b {
+  margin-left: 4px;
+  font-weight: 400;
+}
+.hunt-back {
+  justify-self: start;
+  align-self: flex-start;
+}
+.hunt-pill.hunt-pending,
+.hunt-pill.hunt-week-finalizing {
+  color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.hunt-pill.hunt-week-running {
+  color: var(--ink);
+  background: var(--ok);
+  box-shadow: none;
+}
+.hunt-pill.hunt-week-upcoming {
+  color: var(--accent-hi);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.hunt-pill.hunt-none,
+.hunt-pill.hunt-off,
+.hunt-pill.hunt-missing,
+.hunt-pill.hunt-week-over {
+  color: var(--dim);
+}
+.hunt-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.hunt-tiles-1 {
+  grid-template-columns: minmax(0, 1fr);
+}
+.hunt-tile {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  justify-items: start;
+  align-content: start;
+  padding: 12px;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel);
+  box-shadow: var(--px-border);
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.hunt-tile:hover {
+  background: var(--panel-2);
+}
+.hunt-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.hunt-tile.sel {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--r4);
+}
+/* the hunt being fished stands out from the two that are not */
+.hunt-tile-active {
+  background: var(--hunt-wash);
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--ok);
+}
+.hunt-tile-active.sel {
+  box-shadow: 0 0 0 2px var(--bg-deep), inset 0 0 0 2px var(--ok), inset 0 0 0 4px var(--r4);
+}
+.hunt-tile-upcoming .hunt-tile-art,
+.hunt-tile-none .hunt-tile-art,
+.hunt-tile-off .hunt-tile-art {
+  opacity: 0.7;
+}
+.hunt-tile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+}
+.hunt-tile-n {
+  font: 600 11px/1 var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--r4);
+}
+.hunt-diff {
+  padding: 3px 6px 2px;
+  font: 600 10px/1 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.hunt-diff-easy {
+  color: var(--ok);
+  box-shadow: inset 0 0 0 1px var(--ok);
+}
+.hunt-diff-medium {
+  color: var(--warn);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.hunt-diff-hard {
+  color: var(--danger-hi);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.hunt-tile-art {
+  width: 100%;
+  max-width: 132px;
+  justify-self: center;
+  background: var(--bg-deep);
+  box-shadow: inset 0 0 0 2px var(--line);
+}
+.hunt-tile-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.hunt-tile-name b {
+  font: 400 15px/1.2 var(--font-px);
+  color: var(--text);
+}
+.hunt-tile-prize {
+  font: 400 17px/1 var(--font-px);
+  color: var(--r4);
+}
+.hunt-tile-prize small {
+  font: 600 11px/1 var(--font-body);
+  color: var(--muted);
+}
+.hunt-tile-when,
+.hunt-tile-foot {
+  font-size: 12px;
+  color: var(--muted);
+}
+.hunt-tile-foot {
+  color: var(--text-2);
+}
+.hunt-when .d {
+  font-size: 12px;
+  color: var(--muted);
+}
+.hunt-arc-list {
+  display: grid;
+  gap: 8px;
+}
+.hunt-arc {
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.hunt-arc.sel {
+  box-shadow: inset 0 0 0 1px var(--r4);
+}
+.hunt-arc-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hunt-arc-head:hover {
+  background: var(--panel-3);
+}
+.hunt-arc-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.hunt-arc-title {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.hunt-arc-title b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+.hunt-arc-end {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+}
+.hunt-arc-lines {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0 10px 8px;
+  list-style: none;
+}
+.hunt-arc-line {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.hunt-arc-art {
+  width: 26px;
+}
+.hunt-arc-line .n {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hunt-arc-line .n b {
+  font-weight: 600;
+  color: var(--text-2);
+}
+.hunt-arc-line .e {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.hunt-arc-winner .e {
+  color: var(--r4);
+}
+.cup-legacy {
+  margin: 0 0 8px;
+}
+
 /* the hunt at the pond: the strip under the Cast button */
 .hunt-strip {
   display: grid;
@@ -4773,6 +5087,69 @@ button.link {
 @media (max-width: 720px) {
   .hunt-card {
     padding: 14px 12px;
+  }
+  .hunt-week h2 {
+    font-size: 21px;
+  }
+  .hunt-week-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .hunt-fact {
+    padding: 8px 10px;
+  }
+  .hunt-fact .v {
+    font-size: 16px;
+  }
+  .hunt-fact:not(.warn) .d {
+    display: none;
+  }
+  /* three hunts in three short rows: the whole week fits one screen */
+  .hunt-tiles {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .hunt-tile {
+    grid-template-columns: 52px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'art top pill'
+      'art name prize'
+      'art foot foot';
+    column-gap: 10px;
+    row-gap: 3px;
+    align-items: center;
+    padding: 8px 10px;
+  }
+  .hunt-tile-top {
+    grid-area: top;
+    justify-content: flex-start;
+  }
+  .hunt-tile-art {
+    grid-area: art;
+    width: 52px;
+  }
+  .hunt-tile-name {
+    grid-area: name;
+  }
+  .hunt-tile-name .rarity {
+    display: none;
+  }
+  .hunt-tile-prize {
+    grid-area: prize;
+    justify-self: end;
+    font-size: 14px;
+  }
+  .hunt-tile .hunt-pill {
+    grid-area: pill;
+    justify-self: end;
+    font-size: 10px;
+    padding: 4px 6px 3px;
+  }
+  .hunt-tile-when {
+    display: none;
+  }
+  .hunt-tile-foot {
+    grid-area: foot;
   }
   .hunt-hero-body {
     grid-template-columns: 96px minmax(0, 1fr);

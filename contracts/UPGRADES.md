@@ -403,7 +403,9 @@ for which there is no room; the count costs one write to a slot the cast already
 **Casts from before the count.** A cast made on release 003 has `counted == false` after the upgrade. Reeling it
 in does not touch the count (no underflow), and it does not hold the rules. Such a cast lives for 256 blocks of the
 old window at most and 8,191 of the new one, so for that long after the upgrade to 004 the guarantee is the old
-one: do not change rules then. `test_aCastMadeBeforeTheCountIsNotCounted`.
+one: do not change rules then. `test_theCountOfCastsInTheWaterAcrossTheUpgrade` checks the count across an upgrade
+from whatever the latest release is: it ran this uncounted case while 003 was the latest, and with 004 recorded it
+runs the other one, a counted cast that stays in the count across the upgrade and leaves it when reeled in.
 
 Gas: one more storage write per cast and per reel, to a slot that already holds the hunt's address, about 5,000
 gas each by the EVM's price list (not measured apart from the rest).

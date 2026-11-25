@@ -110,6 +110,7 @@ nothing in the browser decides a catch, a balance or an unlock; the only client-
 | `pnpm api:dev` | runs the verifier on this machine (port 8787) with the environment of [DAILY_REWARDS.md](DAILY_REWARDS.md) |
 | `pnpm sim:daily` | plays the daily challenge sets with a model player, writes the cost table in `DAILY_CHALLENGES.md` |
 | `pnpm sim:hunt` | plays Season Hunt seasons for crowds of 10 to 10,000 model anglers, writes the tables in `SEASON_HUNT_BALANCE.md` |
+| `pnpm sim:week` | works out and plays the three hunts of the repository's week file for the same crowds, writes the weekly tables in `SEASON_HUNT_BALANCE.md` |
 | `pnpm keeper` | the operator's keeper from a terminal: `--dry-run` looks and sends nothing, `--watch` repeats, `--drain` reels in every cast in the water ([KEEPER.md](KEEPER.md)) |
 | `pnpm live:read` | asks the live network, reading only: the block-hash history the long reel window relies on, the deployed lens in the shape this build decodes, the keeper's dry run |
 | `pnpm live` | the tournament rehearsal on a live network; sends transactions with the deployer's key (see the header of `live/cup.live.ts`) |
@@ -131,13 +132,28 @@ If `contracts/out` is missing, `sync` keeps the already generated files.
 
 ## Season Hunt (`#/hunt`)
 
-The first competition in the navigation; the design is in [../SEASON_HUNT.md](../SEASON_HUNT.md) and the odds in
-[SEASON_HUNT_BALANCE.md](SEASON_HUNT_BALANCE.md). It exists in contract mode only and only where the deployment
-names a `seasonHunt`; otherwise the page says the hunt is not deployed on this network.
+The competition in the navigation (Pond, Season Hunt, Tackle, Stats); the design is in
+[../SEASON_HUNT.md](../SEASON_HUNT.md) and the odds in [SEASON_HUNT_BALANCE.md](SEASON_HUNT_BALANCE.md). It exists
+in contract mode only and only where the deployment names a `seasonHunt`; otherwise the page says the hunt is not
+deployed on this network.
 
-- The page shows the season (target, prize, time left, waters, entry rules), the odds of one cast with the tackle
-  in hand and with every other rod, lure and water of the season's table, the catch while it is being decided,
-  the winner, and the past seasons. Everything is read from `SeasonHunt.list`.
+- **A weekly season is three hunts**, each a season of the contract. Which seasons belong together comes from
+  `src/generated/weeks.ts`, which `pnpm sync` builds from `../deployments/weeks/<chainId>/*.json` (written by the
+  script that creates a week) and the week files in `../contracts/script/seasons/weeks/`. The grouping, every
+  status and the countdown are pure functions in `src/game/week.ts`. Dates, prizes, winners and claims are read
+  from `SeasonHunt.list` and never from the registry; a season no week claims is shown as a week of one hunt.
+- The page shows the week (name, dates, pool, hunts concluded, a countdown to the next event), three hunt cards
+  (target, difficulty, prize, days, status: Upcoming, Active, Pending finalization, Winner found, No winner), and
+  for the selected hunt its rules, the odds of one cast with the tackle in hand and with every other rod, lure and
+  water of its table, the catch while it is being decided, the winner and the claim. Completed weeks are in the
+  archive below; a prize won and not yet claimed is offered at the top whichever week it is from.
+- A cast is offered only for a hunt the contract reports as running and funded. The pond strip names the hunt
+  and its place in the week ("hunt 2/3") and disappears between hunts.
+- `?huntDemo=upcoming|monday|early|midweek|friday|finalizing|over` on a development server shows a made-up week
+  in that state (`src/game/fixtures/weekDemo.ts`). It reads and sends nothing and is not in the production build.
+- **Tournaments** are no longer in the navigation. The page is still routed at `#/cup` as "Legacy tournaments"
+  and linked from the Season Hunt page, so results can be read and outstanding prizes claimed. The weekly
+  leaderboard is "My week" under Stats, a personal record.
 - Fishing happens at the pond. The gold strip under the Cast button switches the hunt on and off; with it on the
   button reads **Hunt cast** and the cast is sent to `SeasonHunt.cast` instead of `FishingGame.cast`. The rest of
   the cast is the ordinary flow.
@@ -246,6 +262,7 @@ src/game/              the rules, pure TypeScript, no DOM and no storage
   chainOutcome.ts      what a pending cast will be, computed as the contract computes it
   tournament.ts        score, week boundaries, top ten, demo standings
   hunt.ts              Season Hunt: the chance of a seasonal cast as the contract computes it, odds as text, statuses, the drand round of a cast
+  week.ts              weekly seasons: the week file and its validation, grouping the contract's seasons into weeks, card and week statuses, the countdown, the archive
   release.ts           which release of the game answered, and the player's view and the reel window of each
   progress.ts          unlocks (permanent vs ownership), encyclopedia, achievements
   mastery.ts           location mastery: three tiers per water as a pure function of the encyclopedia

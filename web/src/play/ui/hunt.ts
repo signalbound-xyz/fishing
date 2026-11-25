@@ -1,27 +1,35 @@
 /**
  * The Season Hunt page, and the hunt's strip under the pond's Cast button.
  *
- * A season: one target fish, one prize, the first angler to hook it. Fishing for it happens at the pond, with the
- * player's own tackle: a seasonal cast is an ordinary cast that is also an attempt at the target. This page says
- * what the season is, what the player's tackle is worth in it, who holds the catch, and keeps the older seasons.
+ * A weekly season is three hunts, one after another: each has its own target fish, its own waters and bonus table,
+ * its own prize and its own winner, the first angler to hook the fish. The page shows the week as one event (what
+ * it is called, what it pays in all, how far it has got and what comes next), its three hunts side by side, and
+ * the hunt the player picked in full. Fishing happens at the pond, with the player's own tackle: a seasonal cast is
+ * an ordinary cast that is also an attempt at the target.
  *
- * Every number on it is the contract's: the chance of a cast is the season's own table (game/hunt.ts mirrors the
- * contract's arithmetic exactly), and whether a cast hooked the target is the contract's answer, never a guess.
+ * Which seasons make a week is a list kept beside the contracts (game/week.ts). Everything else on the page is the
+ * contract's: the dates, the prizes, who holds the catch, whether it was claimed. The chance of a cast is the
+ * season's own table (game/hunt.ts mirrors the contract's arithmetic exactly), and whether a cast hooked the target
+ * is the contract's answer, never a guess.
  */
 import { EXPLORER_URL, deployment } from '../../config';
 import { LOCATIONS, SPECIES } from '../../game/content';
-import { STATUS_LABEL, atLeastOnce, bestChance, bonusParts, chanceOf, countdown, levelOfXp, oddsText, shareText, timesText, type HuntStatus } from '../../game/hunt';
+import { atLeastOnce, bestChance, bonusParts, chanceOf, countdown, levelOfXp, oddsText, shareText, timesText, type HuntStatus } from '../../game/hunt';
 import { canEnter } from '../../game/progress';
 import type { Save } from '../../game/types';
+import { CARD_LABEL, DIFFICULTY_LABEL, PRIZE_LABEL, claimable, concluded, featuredHunt, pageState, prizeState, progressText, type CardStatus, type WeekHunt, type WeekView } from '../../game/week';
 import { openFluentConnect } from '../../fluent';
 import { emit, state } from '../../store';
 import { LURES, RODS } from '../../tackle/catalog';
 import { h, mount, shortAddr, sigOf } from '../../ui/dom';
 import { fishArt } from '../fishSprite';
-import { HUNT_DEPLOYED, activeHunt, armHunt, featuredHunt, huntBlocker, huntCastFor, huntNow, huntOps, hunts, isFinal, loadHunts, myChance, myHits, myWaiting, showMoreHunts, statusNow, syncHunt, tackleOf, type HuntSeason, type PendingAttempt } from '../hunt';
+import { HUNT_DEMO, HUNT_DEPLOYED, activeHunt, armHunt, huntBlocker, huntCastFor, huntNow, huntOps, hunts, isFinal, loadHunts, myChance, myHits, myWaiting, showMoreHunts, statusNow, syncHunt, tackleOf, weekNow, weeksNow, type HuntSeason, type PendingAttempt } from '../hunt';
 import { CHAIN, ops } from '../ops';
 import { getSave, rev } from '../state';
 import { rarityTag } from './fmt';
+
+type Week = WeekView<HuntSeason>;
+type Hunt = WeekHunt<HuntSeason>;
 
 const visible = (): boolean => location.hash === '#/hunt';
 const blend = (n: number): string => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -33,16 +41,44 @@ const date = (unix: number): string => new Date(unix * 1000).toLocaleDateString(
 const explorer = (path: string, text: string, title?: string): HTMLElement =>
   EXPLORER_URL ? h('a', { class: 'link', text, title, attrs: { href: `${EXPLORER_URL}/${path}`, target: '_blank', rel: 'noopener' } }) : h('span', { text, title });
 
-/** The season the page shows; null = the featured one. */
-let picked: number | null = null;
-let loadingMore = false;
+const utc = (unix: number, opts: Intl.DateTimeFormatOptions): string => new Date(unix * 1000).toLocaleDateString('en-US', { timeZone: 'UTC', ...opts });
+const monthDay = (unix: number): string => utc(unix, { month: 'short', day: 'numeric' });
+/** `Wednesday, Dec 9, 00:00 UTC`: when something is scheduled. */
+const utcMoment = (unix: number): string => `${utc(unix, { weekday: 'long', month: 'short', day: 'numeric' })}, ${new Date(unix * 1000).toISOString().slice(11, 16)} UTC`;
 
-function shownSeason(): HuntSeason | null {
-  if (picked !== null) {
-    const s = hunts.list.find((x) => x.id === picked);
-    if (s) return s;
-  }
-  return featuredHunt();
+/** `Dec 7 – 13` or `Nov 30 – Dec 6`: the days from `start` to the last second before `end`, in UTC. */
+export function dateRange(start: number, end: number): string {
+  const last = Math.max(start, end - 1);
+  if (monthDay(start) === monthDay(last)) return monthDay(start);
+  return utc(start, { month: 'short' }) === utc(last, { month: 'short' }) ? `${monthDay(start)} – ${utc(last, { day: 'numeric' })}` : `${monthDay(start)} – ${monthDay(last)}`;
+}
+
+/** `Mon–Tue`: the weekdays a hunt runs on, in UTC. */
+export function weekdays(start: number, end: number): string {
+  const a = utc(start, { weekday: 'short' });
+  const b = utc(Math.max(start, end - 1), { weekday: 'short' });
+  return a === b && end - start <= 86_400 ? a : `${a}–${b}`;
+}
+
+/** The week the page shows; null = the current one. The hunt of it that is open; null = the one that matters now. */
+let pickedWeek: string | null = null;
+let pickedHunt: number | null = null;
+let loadingMore = false;
+/** Weeks listed in the archive before "show older". */
+let archiveShown = 4;
+
+function shownWeek(weeks: Week[]): Week | null {
+  return (pickedWeek !== null ? weeks.find((w) => w.id === pickedWeek) : undefined) ?? weekNow();
+}
+
+function shownHunt(w: Week): Hunt | null {
+  return (pickedHunt !== null ? w.hunts.find((x) => x.seasonId === pickedHunt) : undefined) ?? featuredHunt(w);
+}
+
+function pick(week: string | null, hunt: number | null): void {
+  pickedWeek = week;
+  pickedHunt = hunt;
+  emit();
 }
 
 /** A countdown the page repaints every second without re-rendering: `data-until` holds the unix time. */
@@ -58,7 +94,10 @@ function paintClocks(root: ParentNode = document): void {
   });
 }
 
-const statusPill = (st: HuntStatus, final = false): HTMLElement => h('span', { class: `hunt-pill hunt-${st}`, text: st === 'winner' && !final ? 'Target hooked' : STATUS_LABEL[st] });
+const cardPill = (c: CardStatus): HTMLElement => h('span', { class: `hunt-pill hunt-${c}`, text: CARD_LABEL[c] });
+const WEEK_STATE: Record<Week['state'], string> = { upcoming: 'Upcoming', running: 'In progress', finalizing: 'Finalizing', over: 'Completed' };
+const weekPill = (w: Week): HTMLElement => h('span', { class: `hunt-pill hunt-week-${w.state}`, text: WEEK_STATE[w.state] });
+const who = (player: string): string => (state.wallet?.address.toLowerCase() === player.toLowerCase() ? 'you' : shortAddr(player));
 
 // ------------------------------------------------------------------ the page
 
@@ -69,14 +108,13 @@ export function initHunt(root: HTMLElement): () => void {
         'div',
         { class: 'card hunt-off' },
         h('span', { class: 'hunt-kicker', text: 'Season Hunt' }),
-        h('h2', { text: 'One fish. One prize. The first angler to hook it.' }),
+        h('h2', { text: 'One week. Three fish. Three prizes.' }),
         h('p', {
           class: 'muted',
           text: CHAIN
-            ? 'The Season Hunt is not deployed on this network yet. When a season opens, it is fished right at the pond, with your own rod and lures.'
+            ? 'The Season Hunt is not deployed on this network yet. When a weekly season opens, its three hunts are fished right at the pond, with your own rod and lures.'
             : 'The Season Hunt runs on the contracts: its casts, its winner and its prize live onchain. This is the local game, so there is none here.',
         }),
-        h('a', { class: 'link', text: 'Tournaments →', attrs: { href: '#/cup' } }),
       ),
     );
     return () => undefined;
@@ -85,9 +123,12 @@ export function initHunt(root: HTMLElement): () => void {
   const side = h('div', { class: 'col-right card hunt-side' });
   root.append(main, side);
   const sig = (): string => {
-    const s = shownSeason();
     const save = getSave();
-    return sigOf(hunts.rev, s?.id, s ? statusNow(s) : '', s ? isFinal(s) : '', state.wallet?.address, visible(), rev(), save.location, save.equipped, hunts.busy, loadingMore, picked);
+    // every hunt's card status: the page follows the clock from one read of the chain to the next
+    const statuses = weeksNow()
+      .map((w) => `${w.id}:${w.hunts.map((x) => x.status).join(',')}`)
+      .join('|');
+    return sigOf(hunts.rev, statuses, hunts.loaded, hunts.failed, state.wallet?.address, visible(), rev(), save.location, save.equipped, hunts.busy, loadingMore, pickedWeek, pickedHunt, archiveShown);
   };
   const renderMain = mount(main, sig, mainView);
   const renderSide = mount(side, sig, sideView);
@@ -112,26 +153,143 @@ export function tickHunt(): void {
 }
 
 function mainView(): HTMLElement[] {
-  if (!hunts.loaded) {
-    return [h('div', { class: 'card hunt-card' }, h('p', { class: 'muted', text: hunts.failed ? 'Cannot read the seasons from the network. Trying again…' : 'Reading the seasons…' }))];
+  const weeks = weeksNow();
+  const page = pageState({ loaded: hunts.loaded, failed: hunts.failed, seasons: hunts.list.length, weeks: weeks.length });
+  if (page === 'loading' || page === 'error') {
+    return [h('div', { class: 'card hunt-card', attrs: { role: 'status' } }, h('p', { class: page === 'error' ? 'warn' : 'muted', text: page === 'error' ? 'Cannot read the seasons from the network. Trying again…' : 'Reading the seasons…' }))];
   }
-  const s = shownSeason();
-  if (!s) {
+  const w = shownWeek(weeks);
+  if (page === 'empty' || !w) {
     return [
       h(
         'div',
         { class: 'card hunt-card' },
         h('span', { class: 'hunt-kicker', text: 'Season Hunt' }),
         h('h2', { text: 'No season has been announced yet' }),
-        h('p', { class: 'muted', text: 'A season names one target fish and a BLEND prize. The first angler to hook the fish takes the whole prize. Check back soon.' }),
+        h('p', { class: 'muted', text: 'A weekly season is three hunts, one after another. Each names a target fish and a BLEND prize, and the first angler to hook the fish takes that prize. Check back soon.' }),
       ),
     ];
   }
-  return [overview(s), ...hitBanners(s), resultCard(s), rulesCard(s)].filter((x): x is HTMLElement => !!x);
+  const hunt = shownHunt(w);
+  const s = hunt?.season ?? null;
+  return [
+    HUNT_DEMO ? h('p', { class: 'hunt-note warn', text: 'Preview with made-up seasons: nothing here is read from the contract, and nothing is sent to it.' }) : null,
+    page === 'stale' ? h('p', { class: 'hunt-note warn', attrs: { role: 'status' }, text: 'Could not refresh from the network just now. This is what was read last; trying again…' }) : null,
+    ...claimNotes(weeks, hunt),
+    weekHeader(w),
+    // a season of one hunt has nothing to choose between: the hunt itself is right below
+    w.hunts.length > 1 ? huntTiles(w, hunt) : null,
+    ...(s && hunt ? [overview(s, hunt, w), ...hitBanners(s), resultCard(s), rulesCard(s, w)] : [missingCard()]),
+  ].filter((x): x is HTMLElement => !!x);
+}
+
+/** A prize the player has won and not taken, in a hunt that is not the one on the page. */
+function claimNotes(weeks: Week[], shown: Hunt | null): HTMLElement[] {
+  return claimable(weeks, state.wallet?.address, huntNow())
+    .filter((x) => x.seasonId !== shown?.seasonId)
+    .map((x) => {
+      const s = x.season!;
+      const week = weeks.find((w) => w.hunts.includes(x));
+      return h(
+        'section',
+        { class: 'card hunt-card hunt-hit' },
+        h('b', { text: `You won ${blend(s.prize)} BLEND: ${s.name}` }),
+        h('span', { class: 'muted', text: 'The prize is held for you by the hunt contract until you claim it.' }),
+        h('button', { class: 'btn btn-primary', text: 'Open the hunt', attrs: { type: 'button' }, onclick: () => pick(week?.id ?? null, x.seasonId) }),
+      );
+    });
+}
+
+/** The week as one event: what it is called, when it runs, what it pays in all, how far it has got, what is next. */
+function weekHeader(w: Week): HTMLElement {
+  const current = weekNow();
+  const fact = (k: string, v: Node | string, d: Node | string | null, cls = ''): HTMLElement => h('div', { class: `hunt-fact ${cls}` }, h('span', { class: 'k', text: k }), h('span', { class: 'v' }, v), d ? h('span', { class: 'd' }, d) : null);
+  const unfunded = w.hunts.filter((x) => x.season && !x.season.sponsor && !concluded(x.status)).length;
+  const prizes = w.hunts.filter((x) => x.season).length;
+  const n = w.next;
+  const NEXT = { 'hunt-starts': 'starts in', 'hunt-ends': 'ends in', 'result-final': 'result final in' } as const;
+  const label = (index: number): string => (w.legacy ? 'The hunt' : `Hunt ${index + 1}`);
+  return h(
+    'section',
+    { class: `card hunt-card hunt-week hunt-week-is-${w.state}` },
+    h('div', { class: 'hunt-hero-top' }, h('span', { class: 'hunt-kicker', text: w.legacy ? 'Season Hunt · single season' : 'Season Hunt · weekly season' }), weekPill(w)),
+    h('h2', { text: w.title }),
+    w.description ? h('p', { class: 'hunt-desc', text: w.description }) : null,
+    h(
+      'div',
+      { class: 'hunt-week-facts' },
+      fact('Dates', dateRange(w.start, w.end), `${utc(w.start, { year: 'numeric' })} · UTC`, 'dates'),
+      fact(
+        'Prize pool',
+        h('span', null, `${blend(w.totalPrize)} `, h('small', { text: 'BLEND' })),
+        unfunded ? `${unfunded} of ${prizes} ${prizes === 1 ? 'prize' : 'prizes'} not funded yet` : prizes === 1 ? 'one prize · winner takes all' : `${prizes} prizes, one per hunt`,
+        unfunded ? 'pool warn' : 'pool',
+      ),
+      fact(
+        'Hunts concluded',
+        h('span', { class: 'hunt-dots', attrs: { role: 'img', 'aria-label': `${w.concluded} of ${w.hunts.length} hunts concluded` } }, ...w.hunts.map((x) => h('i', { class: concluded(x.status) ? 'done' : x.status === 'active' || x.status === 'pending' ? 'now' : '' })), h('b', { text: progressText(w) })),
+        w.state === 'over' ? 'every result is final' : w.state === 'finalizing' ? 'waiting for the last result' : null,
+      ),
+      n ? fact(`${label(n.index)} ${NEXT[n.kind]}`, until(n.at), utcMoment(n.at), 'next') : fact('Next', w.state === 'over' ? 'Completed' : '—', null, 'next'),
+    ),
+    current && current.id !== w.id ? h('button', { class: 'btn btn-sm hunt-back', text: `← Back to ${current.state === 'over' ? 'the latest season' : 'the current season'}`, attrs: { type: 'button' }, onclick: () => pick(null, null) }) : null,
+  );
+}
+
+/** The foot of a hunt's tile: the one thing to know about it right now. */
+function tileFoot(x: Hunt): (Node | string)[] {
+  const s = x.season;
+  if (!s) return ['Not on the chain'];
+  switch (x.status) {
+    case 'upcoming':
+      return s.sponsor ? ['Starts in ', until(s.start)] : ['Not funded yet · starts in ', until(s.start)];
+    case 'active':
+      return ['Ends in ', until(s.end)];
+    case 'pending':
+      return s.winner ? [`Hooked by ${who(s.winner.player)} · final in `, until(s.finalAt)] : ['Late catches for ', until(s.finalAt)];
+    case 'winner':
+      return [`Won by ${who(s.winner!.player)}`];
+    case 'none':
+      return ['Nobody hooked it'];
+    default:
+      return ['Did not run'];
+  }
+}
+
+/** The hunts of the week, in order: three tiles, the one being fished the most prominent, the open one outlined. */
+function huntTiles(w: Week, shown: Hunt | null): HTMLElement {
+  return h(
+    'div',
+    { class: `hunt-tiles hunt-tiles-${w.hunts.length}`, attrs: { role: 'tablist', 'aria-label': 'Hunts of the season' } },
+    w.hunts.map((x) => {
+      const s = x.season;
+      const sel = shown?.seasonId === x.seasonId;
+      const sp = s ? SPECIES[s.speciesId] : undefined;
+      return h(
+        'button',
+        {
+          class: `hunt-tile hunt-tile-${x.status}${sel ? ' sel' : ''}`,
+          attrs: { type: 'button', role: 'tab', 'aria-selected': String(sel) },
+          onclick: () => pick(pickedWeek ?? (weekNow()?.id === w.id ? null : w.id), x.seasonId),
+        },
+        h('span', { class: 'hunt-tile-top' }, h('span', { class: 'hunt-tile-n', text: w.legacy ? 'Hunt' : `Hunt ${x.index + 1}` }), x.difficulty ? h('span', { class: `hunt-diff hunt-diff-${x.difficulty}`, text: DIFFICULTY_LABEL[x.difficulty] }) : null),
+        s ? fishArt(s.speciesId, { cls: 'hunt-tile-art' }) : h('span', { class: 'hunt-tile-art' }),
+        h('span', { class: 'hunt-tile-name' }, h('b', { text: s ? fishName(s) : 'Unknown' }), sp ? rarityTag(sp.rarity) : null),
+        h('span', { class: 'hunt-tile-prize' }, s ? `${blend(s.prize)} ` : '— ', h('small', { text: 'BLEND' })),
+        h('span', { class: 'hunt-tile-when', text: s ? `${weekdays(s.start, s.end)} · ${dateRange(s.start, s.end)}` : '' }),
+        cardPill(x.status),
+        h('span', { class: 'hunt-tile-foot' }, ...tileFoot(x)),
+      );
+    }),
+  );
+}
+
+function missingCard(): HTMLElement {
+  return h('section', { class: 'card hunt-card' }, h('h3', { text: 'This hunt is not on the chain' }), h('p', { class: 'muted', text: 'The season lists it, but the hunt contract does not have it. Nothing can be cast for it.' }));
 }
 
 /** What the season is: its fish, its prize, its clock, where it is fished and what is asked of the angler. */
-function overview(s: HuntSeason): HTMLElement {
+function overview(s: HuntSeason, x: Hunt, w: Week): HTMLElement {
   const st = statusNow(s);
   const sp = SPECIES[s.speciesId];
   const now = huntNow();
@@ -139,7 +297,7 @@ function overview(s: HuntSeason): HTMLElement {
   const save = getSave();
 
   let clock: HTMLElement;
-  if (st === 'upcoming') clock = h('div', { class: 'hunt-when' }, h('span', { class: 'k', text: 'Starts in' }), until(s.start, 'v'));
+  if (st === 'upcoming') clock = h('div', { class: 'hunt-when' }, h('span', { class: 'k', text: 'Starts in' }), until(s.start, 'v'), h('span', { class: 'd', text: utcMoment(s.start) }));
   else if (st === 'active') clock = h('div', { class: 'hunt-when' }, h('span', { class: 'k', text: 'Ends in' }), until(s.end, 'v'));
   else if (st === 'closing') clock = h('div', { class: 'hunt-when' }, h('span', { class: 'k', text: 'Casting is over · late catches recorded for' }), until(s.finalAt, 'v'));
   else if (st === 'winner' && now <= s.finalAt) clock = h('div', { class: 'hunt-when' }, h('span', { class: 'k', text: 'Result final in' }), until(s.finalAt, 'v'));
@@ -156,8 +314,8 @@ function overview(s: HuntSeason): HTMLElement {
     h(
       'div',
       { class: 'hunt-hero-top' },
-      h('span', { class: 'hunt-kicker', text: `Season Hunt · #${s.id + 1}` }),
-      statusPill(st, isFinal(s)),
+      h('span', { class: 'hunt-kicker', text: w.legacy ? 'The hunt' : `Hunt ${x.index + 1} of ${w.hunts.length}${x.difficulty ? ` · ${DIFFICULTY_LABEL[x.difficulty]}` : ''}` }),
+      cardPill(x.status),
     ),
     h(
       'div',
@@ -176,7 +334,7 @@ function overview(s: HuntSeason): HTMLElement {
             { class: 'hunt-prize', title: s.sponsor ? 'The whole prize is held by the hunt contract since before the season started. It goes to the winner, all of it.' : 'The prize is not in the contract yet: nobody can cast until it is.' },
             h('span', { class: 'k', text: 'Prize' }),
             h('span', { class: 'v' }, `${blend(s.prize)} `, h('small', { text: 'BLEND' })),
-            h('span', { class: s.sponsor ? 'd' : 'd warn', text: s.sponsor ? 'held in escrow · winner takes all' : 'not funded yet' }),
+            h('span', { class: s.sponsor ? 'd' : 'd warn', text: s.sponsor ? (prizeState(s, now) === 'escrow' ? 'held in escrow · winner takes all' : PRIZE_LABEL[prizeState(s, now)]) : 'not funded yet' }),
           ),
           clock,
         ),
@@ -204,7 +362,12 @@ function overview(s: HuntSeason): HTMLElement {
 
 /** The one thing to do about the season right now. */
 function heroAction(s: HuntSeason, st: HuntStatus, save: Save): HTMLElement | null {
-  if (st === 'upcoming') return h('div', { class: 'hunt-cta' }, h('span', { class: 'muted', text: 'Get your tackle ready: a seasonal cast uses your own rod and lure, and costs energy like any cast.' }), h('a', { class: 'btn', text: 'Tackle shop', attrs: { href: '#/tackle' } }));
+  if (st === 'upcoming') {
+    const text = s.sponsor
+      ? 'This hunt has not opened yet: nothing can be cast for it until it does. Get your tackle ready: a seasonal cast uses your own rod and lure, and costs energy like any cast.'
+      : 'This hunt has not opened yet, and its prize is not in the contract. It takes casts only if the whole prize is in before the start.';
+    return h('div', { class: 'hunt-cta' }, h('span', { class: s.sponsor ? 'muted' : 'warn', text }), h('a', { class: 'btn', text: 'Tackle shop', attrs: { href: '#/tackle' } }));
+  }
   if (st !== 'active') return null;
   if (!state.wallet) return h('div', { class: 'hunt-cta' }, h('button', { class: 'btn btn-primary hunt-go', text: 'Connect to hunt', attrs: { type: 'button' }, onclick: openFluentConnect }));
   // the water the player stands at, if the fish is hunted there; else the best one they have opened
@@ -262,7 +425,7 @@ function resultCard(s: HuntSeason): HTMLElement | null {
     return h(
       'section',
       { class: 'card hunt-card hunt-result' },
-      h('h3', { text: st === 'cancelled' ? 'This season did not run' : 'Nobody hooked it' }),
+      h('h3', { text: st === 'cancelled' ? 'This hunt did not run' : 'Nobody hooked it' }),
       h('p', {
         class: 'muted',
         text:
@@ -270,7 +433,7 @@ function resultCard(s: HuntSeason): HTMLElement | null {
             ? s.sponsor
               ? 'It was called off before it started. The prize goes back to its sponsor.'
               : 'Its prize was never put up, so nobody could cast.'
-            : `${s.attempts.toLocaleString('en-US')} seasonal casts were made and the ${fishName(s)} got away from every one. The prize goes back to its sponsor, who may put it into a later season.`,
+            : `The hunt is over for good. ${s.attempts.toLocaleString('en-US')} seasonal casts were made and the ${fishName(s)} got away from every one. The prize goes back to its sponsor, who may put it into a later hunt.`,
       }),
       s.sponsor ? h('div', { class: 'hunt-row' }, h('span', { class: 'k', text: 'Prize' }), h('span', { text: s.returned ? `${blend(s.prize)} BLEND · returned to the sponsor` : `${blend(s.prize)} BLEND · still in escrow` })) : null,
       mine && !s.returned
@@ -285,10 +448,10 @@ function resultCard(s: HuntSeason): HTMLElement | null {
   return h(
     'section',
     { class: `card hunt-card hunt-result${final ? ' final' : ''}${isMe ? ' mine' : ''}` },
-    h('h3', { text: final ? (isMe ? 'You won the season' : 'Winner') : isMe ? 'You hold the catch' : 'The target is hooked' }),
+    h('h3', { text: final ? (isMe ? 'You won this hunt' : 'Winner') : isMe ? 'You hold the catch' : 'The target is hooked' }),
     final
       ? null
-      : h('p', { class: 'muted' }, 'This cast holds the catch. It becomes final in ', until(s.finalAt), ': until then a cast made earlier that also hooked the fish can still be recorded, and would come first.'),
+      : h('p', { class: 'muted' }, 'Awaiting finalization. This cast holds the catch and casting is closed. It becomes final in ', until(s.finalAt), ': until then a cast made earlier that also hooked the fish can still be recorded, and would come first.'),
     row('Angler', explorer(`address/${w.player}`, shortAddr(w.player), w.player), isMe ? h('span', { class: 'hunt-you', text: 'you' }) : null),
     row('Fish', `${fishName(s)} at ${waterName(w.water)}`),
     row('Tackle', `${rodName(w.rod)} · ${lureName(w.lure)}`),
@@ -305,21 +468,22 @@ function resultCard(s: HuntSeason): HTMLElement | null {
   );
 }
 
-function rulesCard(s: HuntSeason): HTMLElement {
+function rulesCard(s: HuntSeason, w: Week): HTMLElement {
   const b = hunts.beacon;
   const minutes = Math.max(1, Math.round(s.settleWindow / 60));
   return h(
     'section',
     { class: 'card hunt-card hunt-rules' },
-    h('h3', { text: 'How the hunt works' }),
+    h('h3', { text: w.legacy ? 'How the hunt works' : 'How a weekly season works' }),
     h(
       'ol',
       null,
+      w.legacy ? null : h('li', { text: `A season is ${w.hunts.length} hunts, one after another. Each has its own fish, its own waters and its own prize, and opens at its own time: a fish hooked early does not bring the next hunt forward.` }),
       h('li', { text: 'A seasonal cast is an ordinary cast made with the hunt switched on. It costs the same energy, wears the same rod and uses the same lure, and you land whatever bites, as always.' }),
       h('li', { text: `On top of that, each such cast is one attempt at the ${fishName(s)}: a separate draw, with the odds shown here for your tackle and water. It changes nothing about your ordinary catch.` }),
       h('li', { text: 'Casts are numbered in the order they enter the chain. The lowest-numbered cast that hooks the target wins the whole prize. Sending a transaction faster later on does not change that order.' }),
       h('li', { text: `A hit has to be recorded on the chain within ${minutes} min of its cast; the game does that for you, and anyone may do it for anyone. Once that time is over for the recorded hit, the result is final.` }),
-      h('li', { text: 'The winner claims the prize and a trophy fish of the target species. If nobody hooks it, the prize goes back to its sponsor.' }),
+      h('li', { text: `The winner claims the prize and a trophy fish of the target species.${w.legacy ? '' : ' One angler may win more than one hunt.'} If nobody hooks it, the prize goes back to its sponsor.` }),
     ),
     b
       ? h(
@@ -338,8 +502,14 @@ function rulesCard(s: HuntSeason): HTMLElement {
 
 function sideView(): HTMLElement[] {
   if (!hunts.loaded) return [h('p', { class: 'muted', text: '…' })];
-  const s = shownSeason();
-  return [s ? tackleSection(s) : null, historySection(s), h('p', { class: 'hunt-also' }, 'Looking for scored fishing with a leaderboard? ', h('a', { class: 'link', text: 'Tournaments →', attrs: { href: '#/cup' } }))].filter((x): x is HTMLElement => !!x);
+  const weeks = weeksNow();
+  const w = shownWeek(weeks);
+  const s = w ? (shownHunt(w)?.season ?? null) : null;
+  return [
+    s ? tackleSection(s) : null,
+    archiveSection(weeks, w),
+    h('p', { class: 'hunt-also' }, 'Tournaments are retired: no new ones are announced. Their results and any prize not yet claimed are kept: ', h('a', { class: 'link', text: 'Legacy tournaments →', attrs: { href: '#/cup' } })),
+  ].filter((x): x is HTMLElement => !!x);
 }
 
 /** What the player's tackle is worth in the season, and what other tackle would be. */
@@ -393,38 +563,65 @@ function tackleSection(s: HuntSeason): HTMLElement | null {
   );
 }
 
-/** Every season the contract holds, newest first; a click shows one on the left. */
-function historySection(shownNow: HuntSeason | null): HTMLElement {
-  const me = state.wallet?.address.toLowerCase();
-  const rows = hunts.list.map((s) => {
-    const st = statusNow(s);
-    const w = s.winner;
-    const outcome = w ? (me && w.player.toLowerCase() === me ? 'you' : shortAddr(w.player)) : st === 'expired' ? 'no winner' : st === 'cancelled' ? '—' : '';
+/** One hunt of an archived week, in a line: its fish, its prize, and how it ended. */
+function archiveLine(x: Hunt): HTMLElement {
+  const s = x.season;
+  if (!s) return h('li', { class: 'hunt-arc-line' }, h('span', { class: 'hunt-arc-art' }), h('span', { class: 'n', text: 'Not on the chain' }), h('span', { class: 'e' }));
+  const now = huntNow();
+  let end: string;
+  if (x.status === 'winner') end = `${who(s.winner!.player)} · ${s.paid ? 'claimed' : 'not claimed yet'}`;
+  else if (x.status === 'none') end = s.returned ? 'no winner · prize returned' : 'no winner';
+  else if (x.status === 'pending') end = s.winner ? `${who(s.winner.player)} · not final` : 'awaiting the result';
+  else if (x.status === 'off') end = 'did not run';
+  else end = CARD_LABEL[x.status].toLowerCase();
+  return h(
+    'li',
+    { class: `hunt-arc-line hunt-arc-${x.status}`, title: `${s.name} · ${PRIZE_LABEL[prizeState(s, now)]}` },
+    fishArt(s.speciesId, { cls: 'hunt-arc-art' }),
+    h('span', { class: 'n' }, h('b', { text: fishName(s) }), h('span', { class: 'muted', text: ` · ${blend(s.prize)} BLEND` })),
+    h('span', { class: 'e', text: end }),
+  );
+}
+
+/**
+ * Every weekly season there has been, newest first, each with its three fish, its prizes and how each hunt ended.
+ * A click opens one on the left, with the winning casts and the trophies. Nothing leaves this list when a new
+ * season starts.
+ */
+function archiveSection(weeks: Week[], shown: Week | null): HTMLElement {
+  const rows = weeks.slice(0, archiveShown).map((w) => {
+    const won = w.hunts.filter((x) => x.status === 'winner').length;
+    const sel = shown?.id === w.id;
     return h(
-      'button',
-      {
-        class: `hunt-past${shownNow?.id === s.id ? ' sel' : ''}`,
-        attrs: { type: 'button', 'aria-pressed': String(shownNow?.id === s.id) },
-        onclick: () => {
-          picked = s.id;
-          emit();
-          if (matchMedia('(max-width: 860px)').matches) window.scrollTo({ top: 0 });
+      'div',
+      { class: `hunt-arc${sel ? ' sel' : ''}` },
+      h(
+        'button',
+        {
+          class: 'hunt-arc-head',
+          attrs: { type: 'button', 'aria-pressed': String(sel) },
+          onclick: () => {
+            pick(weekNow()?.id === w.id ? null : w.id, null);
+            if (matchMedia('(max-width: 980px)').matches) window.scrollTo({ top: 0 });
+          },
         },
-      },
-      fishArt(s.speciesId, { cls: 'hunt-past-art' }),
-      h('span', { class: 'hunt-past-main' }, h('b', { text: s.name }), h('span', { class: 'muted small', text: `${fishName(s)} · ${blend(s.prize)} BLEND · ${date(s.end)}` })),
-      h('span', { class: 'hunt-past-end' }, statusPill(st, isFinal(s)), outcome ? h('span', { class: 'muted small', text: outcome }) : null),
+        h('span', { class: 'hunt-arc-title' }, h('b', { text: w.title }), h('span', { class: 'muted small', text: `${dateRange(w.start, w.end)}, ${utc(w.start, { year: 'numeric' })} · ${blend(w.totalPrize)} BLEND` })),
+        h('span', { class: 'hunt-arc-end' }, weekPill(w), w.state === 'over' ? h('span', { class: 'muted small', text: won === 0 ? 'no winners' : `${won} of ${w.hunts.length} won` }) : null),
+      ),
+      h('ul', { class: 'hunt-arc-lines' }, w.hunts.map(archiveLine)),
     );
   });
+  const older = weeks.length - archiveShown;
   return h(
     'section',
     { class: 'hunt-history' },
-    h('h3', { text: 'Seasons' }),
-    rows.length ? h('div', { class: 'hunt-past-list' }, rows) : h('p', { class: 'muted', text: 'No seasons yet.' }),
-    hunts.list.length < hunts.total
+    h('h3', { text: 'All seasons' }),
+    rows.length ? h('div', { class: 'hunt-arc-list' }, rows) : h('p', { class: 'muted', text: 'No seasons yet.' }),
+    older > 0 ? h('button', { class: 'btn btn-sm', text: `Show older seasons (${older})`, attrs: { type: 'button' }, onclick: () => ((archiveShown += 8), emit()) }) : null,
+    older <= 0 && hunts.list.length < hunts.total
       ? h('button', {
           class: 'btn btn-sm',
-          text: loadingMore ? 'Loading…' : `Show older seasons (${hunts.total - hunts.list.length})`,
+          text: loadingMore ? 'Loading…' : 'Load older seasons',
           disabled: loadingMore,
           attrs: { type: 'button' },
           onclick: () => {
@@ -432,6 +629,7 @@ function historySection(shownNow: HuntSeason | null): HTMLElement {
             emit();
             void showMoreHunts().finally(() => {
               loadingMore = false;
+              archiveShown += 8;
               emit();
             });
           },
@@ -473,7 +671,9 @@ export function huntStrip(busy: boolean): HTMLElement | null {
   else if (on) line = `Every cast here is also a shot at the ${fishName(s)}: ${oddsText(chance)} per cast (${timesText(s.odds, chance)}) · ${s.attemptsLeft} left today`;
   else line = `Switch the hunt on to make your casts here count: ${oddsText(chance)} per cast · ${s.attemptsLeft} left today`;
 
-  const last = hunts.last && hunts.last.season === s.id ? hunts.last : null;
+  const last = hunts.last && hunts.last.season === s.id && hunts.last.player.toLowerCase() === state.wallet.address.toLowerCase() ? hunts.last : null;
+  const week = weeksNow().find((w) => w.hunts.some((x) => x.seasonId === s.id));
+  const place = week && !week.legacy ? ` · hunt ${week.hunts.findIndex((x) => x.seasonId === s.id) + 1}/${week.hunts.length}` : '';
   const LAST: Record<string, string> = {
     miss: `no ${fishName(s)} this time`,
     recorded: `HOOKED the ${fishName(s)}! It is recorded for you`,
@@ -489,7 +689,7 @@ export function huntStrip(busy: boolean): HTMLElement | null {
     h(
       'div',
       { class: 'hunt-strip-head' },
-      h('a', { class: 'hunt-strip-name', attrs: { href: '#/hunt' }, title: 'Open the Season Hunt page' }, h('span', { class: 'hunt-kicker', text: 'Season Hunt' }), h('b', { text: s.name }), h('span', { class: 'hunt-strip-prize', text: `${blend(s.prize)} BLEND` })),
+      h('a', { class: 'hunt-strip-name', attrs: { href: '#/hunt' }, title: 'Open the Season Hunt page' }, h('span', { class: 'hunt-kicker', text: `Season Hunt${place}` }), h('b', { text: s.name }), h('span', { class: 'hunt-strip-prize', text: `${blend(s.prize)} BLEND` })),
       h('button', {
         class: `btn btn-sm hunt-switch${hunts.armed ? ' on' : ''}`,
         text: hunts.armed ? 'Hunt: on' : 'Hunt: off',

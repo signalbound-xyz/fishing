@@ -181,6 +181,153 @@ What each extra wallet costs its owner under a season’s entry rules:
 For scale: the honest crowd of 1,000 makes 128,504 base-chance casts’ worth of attempts a season, and one full-cap free wallet 140.
 <!-- sim:hunt:end -->
 
+## Weekly seasons: three hunts
+
+A weekly season is three hunts one after another, each a season of the contract with its own fish, rules and
+prize (see "Weekly seasons" in [SEASON_HUNT.md](../SEASON_HUNT.md)). `pnpm sim:week` (`sim/week.ts`,
+`sim/week.sim.ts`) reads the repository's week file, `contracts/script/seasons/weeks/2026-w50.json`, and rewrites
+the tables of this section, so they describe the rules that would be created and not a copy of them.
+
+**What makes a hunt harder.** Not a rarer fish alone: the target's ordinary rarity plays no part in the seasonal
+draw, and ordinary fishing odds, equipment attributes, energy and cast prices are not touched. A hunt's difficulty
+is five numbers of its own rules:
+
+| Lever | Easy | Medium | Hard | What it does |
+|---|---|---|---|---|
+| Who may enter (`minLevel`, `waters`) | everybody, from the first water | level 2, three waters | level 3, and no Village Pond | Fewer anglers and fewer casts for the same prize |
+| Casts a day (`dailyAttempts`) | 20 | 16 | 12 | Fewer chances per wallet, and a scripted wallet is worth less |
+| Expected hits (the base chance against the crowd) | 3 | 2.5 | 2 | A longer hunt, and one that ends with no winner more often |
+| What tackle can add (`maxBonus` and the bonus tables) | +50% | +100% | +200% | Progress counts for more: the best tackle is worth 1.5×, 2× and 3× the base chance |
+| Length | 2 days | 2 days | 3 days | Room for the lower chance to be met |
+
+The prizes follow the same order: 20%, 30% and 50% of the pool.
+
+**What the first testnet week is balanced for.** A crowd of ten, about what the testnet has. The base chances in
+the file are the ones `fitBase` gives for ten model anglers (1 in 86, 1 in 121, 1 in 147), and a test fails if the
+file and the model disagree. The tables then say, for that crowd: a winner in 95%, 92% and 86% of hunts; half of
+the hunts over after 9, 11 and 25 hours; about three weeks in four pay all three prizes, and about one week in a
+hundred has every hunt over within two hours of opening.
+
+**What the simulation assumes**, beyond the season simulation above:
+
+- *Levels and waters.* The four model anglers are given a level (2, 5, 8, 12) and opened waters (`LEVEL`,
+  `OPENED` in `sim/week.ts`). An angler who cannot enter a hunt makes no casts in it. An angler who can fishes the
+  water that gives the most chance a day, counting what the water's energy price lets them cast: a full bar when
+  the hunt opens and what regenerates while it runs.
+- *The hour of a cast.* A hunt is played hour by hour. Of the anglers fishing on a hunt's first day, 15% (`EAGER`)
+  are taken to be waiting for it to open and make that day's casts in its first two hours; everybody else, and
+  everybody on later days, is spread evenly over the day. This is the number the "within 2 h" column leans on, and
+  it is a guess: nobody has watched a hunt open yet. At 30% the easy hunt would be over within two hours about
+  four times in ten.
+- *The Hard hunt on a small testnet.* With level 3 required and no Village Pond, more than half of the model crowd
+  cannot enter: 4 of 10. That is the intent (it is the hunt progress is for), and it is also why its prize is the
+  largest. If the real crowd has nobody at level 3 the hunt cannot be won; check before announcing a week (four
+  recent testnet players were at levels 1, 1, 2 and 4 on 25 November 2026) and lower `minLevel` in the file if so.
+- *One angler, three hunts.* The three hunts are drawn independently. The same wallet may win more than one of
+  them; nothing in the contract or in the model stops it.
+
+**What does not depend on the crowd model.** As for a single season: fitted to its crowd, a hunt behaves the same
+at any size, and the fit is what matters. The last but one table shows the week file meeting a crowd ten times
+larger than it was written for: every hunt is over in under an hour. A week's base chances must be set from the
+casts of the week before, hunt by hunt, and the file is the place to do it: `pnpm sim:week` prints the fitted
+value for each size.
+
+<!-- sim:week:begin -->
+### The three hunts of `2026-w50` ("The Three Strays")
+
+From `contracts/script/seasons/weeks/2026-w50.json`: 7 days from 2026-12-07T00:00:00Z, 1,000 BLEND in all.
+
+| Hunt | Difficulty | Runs | Prize | Target | Waters (bonus) | Level | Casts a day | Tackle cap | Best tackle | Set for |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1. The Gilded Guest | Easy | day 1 to 2, 48 h | 200 BLEND (20%) | Golden Carp | Village Pond, Forest River (+10%) | any | 20 | +50% | ×1.5 | 3 hits |
+| 2. The Night Catfish | Medium | day 3 to 4, 48 h | 300 BLEND (30%) | Wels Catfish | Village Pond, Forest River (+15%), Deep Lake (+30%) | 2+ | 16 | +100% | ×2.0 | 2.5 hits |
+| 3. The Wandering Bluefin | Hard | day 5 to 7, 72 h | 500 BLEND (50%) | Bluefin Tuna | Forest River, Deep Lake (+25%), Northern Sea (+40%) | 3+ | 12 | +200% | ×3.0 | 2 hits |
+
+### Who can enter, and how they fish each hunt
+
+The model anglers of the season simulation, with a level and opened waters each. A cell is the water the angler fishes, the seasonal casts a day, and the chance of a cast against the base chance; "cannot enter" is the level or the waters.
+
+| Angler | Share of the crowd | Level | Waters opened | 1. The Gilded Guest | 2. The Night Catfish | 3. The Wandering Bluefin |
+|---|---|---|---|---|---|---|
+| Newcomer | 55% | 2 | Village Pond | Village Pond, 8 a day, ×1.00 | Village Pond, 8 a day, ×1.00 | cannot enter |
+| Regular | 30% | 5 | Village Pond, Forest River, Deep Lake | Forest River, 14 a day, ×1.30 | Deep Lake, 14 a day, ×1.70 | Deep Lake, 12 a day, ×1.85 |
+| Enthusiast | 12% | 8 | Village Pond, Forest River, Deep Lake, Northern Sea | Forest River, 18 a day, ×1.50 | Deep Lake, 16 a day, ×2.00 | Northern Sea, 12 a day, ×2.60 |
+| Best equipped | 3% | 12 | Village Pond, Forest River, Deep Lake, Northern Sea | Village Pond, 20 a day, ×1.50 | Village Pond, 16 a day, ×2.00 | Northern Sea, 12 a day, ×3.00 |
+
+### Each hunt by crowd size, with the base chance fitted to the crowd
+
+The base chance is set so that the crowd hooks the fish the number of times the hunt is set for. Worked out from the model, not sampled. "Within 2 h" is the chance that the hunt is over 2 hours after it opens; "half are over by" is the median time to the first catch; "mean" is the average among the hunts that have a winner.
+
+| Hunt | Anglers | Can enter | Eligible casts | Base chance | Best tackle | A winner | No winner | Within 2 h | Half are over by | Mean time to the catch | Casts before the win |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1. The Gilded Guest | 10 | 10 | 216 | 1 in 86 | 1 in 58 | 95.0% | 5.0% | 28.2% | 8.8 h | 12.0 h | 61 |
+| 1. The Gilded Guest | 100 | 100 | 2,272 | 1 in 933 | 1 in 622 | 95.0% | 5.0% | 28.2% | 8.8 h | 12.0 h | 639 |
+| 1. The Gilded Guest | 1,000 | 1,000 | 22,720 | 1 in 9,330 | 1 in 6,220 | 95.0% | 5.0% | 28.2% | 8.8 h | 12.0 h | 6,389 |
+| 1. The Gilded Guest | 10,000 | 10,000 | 227,200 | 1 in 93,300 | 1 in 62,200 | 95.0% | 5.0% | 28.2% | 8.8 h | 12.0 h | 63,895 |
+| 2. The Night Catfish | 10 | 10 | 212 | 1 in 121 | 1 in 61 | 91.8% | 8.2% | 24.1% | 11.4 h | 13.5 h | 66 |
+| 2. The Night Catfish | 100 | 100 | 2,200 | 1 in 1,310 | 1 in 654 | 91.8% | 8.2% | 24.1% | 11.4 h | 13.5 h | 684 |
+| 2. The Night Catfish | 1,000 | 1,000 | 22,000 | 1 in 13,100 | 1 in 6,540 | 91.8% | 8.2% | 24.1% | 11.4 h | 13.5 h | 6,838 |
+| 2. The Night Catfish | 10,000 | 10,000 | 220,000 | 1 in 130,700 | 1 in 65,400 | 91.8% | 8.2% | 24.1% | 11.4 h | 13.5 h | 68,375 |
+| 3. The Wandering Bluefin | 10 | 4 | 144 | 1 in 147 | 1 in 49 | 86.5% | 13.5% | 13.7% | 25.0 h | 23.8 h | 49 |
+| 3. The Wandering Bluefin | 100 | 45 | 1,620 | 1 in 1,720 | 1 in 574 | 86.5% | 13.5% | 13.7% | 25.0 h | 23.8 h | 557 |
+| 3. The Wandering Bluefin | 1,000 | 450 | 16,200 | 1 in 17,200 | 1 in 5,740 | 86.5% | 13.5% | 13.7% | 25.0 h | 23.8 h | 5,565 |
+| 3. The Wandering Bluefin | 10,000 | 4,500 | 162,000 | 1 in 172,300 | 1 in 57,400 | 86.5% | 13.5% | 13.7% | 25.0 h | 23.8 h | 55,655 |
+
+### What tackle and progress buy (1,000 anglers)
+
+The share of each hunt’s casts and of its wins by kind of angler, and the same as an advantage: wins per cast against the hunt’s average.
+
+| Hunt | | Newcomer | Regular | Enthusiast | Best equipped |
+|---|---|---|---|---|---|
+| 1. The Gilded Guest | Anglers who can enter | 550 | 300 | 120 | 30 |
+| | Share of the casts | 39% | 37% | 19% | 5% |
+| | Share of the wins | 31% | 39% | 23% | 6% |
+| | Wins per cast, against the average | ×0.81 | ×1.05 | ×1.22 | ×1.22 |
+| 2. The Night Catfish | Anglers who can enter | 550 | 300 | 120 | 30 |
+| | Share of the casts | 40% | 38% | 17% | 4% |
+| | Share of the wins | 27% | 44% | 24% | 6% |
+| | Wins per cast, against the average | ×0.67 | ×1.14 | ×1.35 | ×1.35 |
+| 3. The Wandering Bluefin | Anglers who can enter | — | 300 | 120 | 30 |
+| | Share of the casts | — | 67% | 27% | 7% |
+| | Share of the wins | — | 58% | 33% | 9% |
+| | Wins per cast, against the average | — | ×0.87 | ×1.22 | ×1.41 |
+
+### The week as a whole, fitted to its crowd
+
+20,000 weeks per row, sampled hour by hour. "Every hunt over within 2 h" is the week the design is meant to avoid: three hunts that all end right after they open.
+
+| Anglers | 3 winners | 2 | 1 | None | Every hunt over within 2 h | A hunt still on a day after it opened | Share of the pool paid out |
+|---|---|---|---|---|---|---|---|
+| 10 | 76% | 22% | 2% | 0.1% | 0.9% | 73% | 90% |
+| 100 | 76% | 22% | 2% | 0.1% | 0.8% | 73% | 90% |
+| 1,000 | 76% | 22% | 2% | 0.1% | 0.9% | 73% | 90% |
+| 10,000 | 75% | 23% | 2% | 0.1% | 0.9% | 73% | 90% |
+
+### The week file as written, when another crowd comes
+
+The file's base chances are fitted to 10 anglers. Each cell: no winner / over within 2 h / half are over by.
+
+| Hunt | Base chance in the file | 10 come | 100 come | 1,000 come | 10,000 come |
+|---|---|---|---|---|---|
+| 1. The Gilded Guest | 1 in 86 | 5% / 28% / 8.8 h | 0% / 97% / 0.4 h | 0% / 100% / 0.0 h | 0% / 100% / 0.0 h |
+| 2. The Night Catfish | 1 in 121 | 8% / 24% / 11.4 h | 0% / 95% / 0.5 h | 0% / 100% / 0.0 h | 0% / 100% / 0.0 h |
+| 3. The Wandering Bluefin | 1 in 147 | 14% / 14% / 25.0 h | 0% / 82% / 0.8 h | 0% / 100% / 0.1 h | 0% / 100% / 0.0 h |
+
+### How many hits to set a hunt for
+
+Fewer expected hits make a hunt last longer and end empty more often. Any crowd, with the base chance fitted to it; the opening rush is 15% of the first day's anglers in the first 2 hours.
+
+| Expected hits | No winner | 48 h hunt: within 2 h / half over by | 72 h hunt: within 2 h / half over by |
+|---|---|---|---|
+| 1 | 36.8% | 10% / 33.3 h | 7% / 2.1 d |
+| 1.5 | 22.3% | 15% / 21.9 h | 10% / 33.3 h |
+| 2 | 13.5% | 20% / 15.3 h | 14% / 25.0 h |
+| 2.5 | 8.2% | 24% / 11.4 h | 17% / 19.3 h |
+| 3 | 5.0% | 28% / 8.8 h | 20% / 15.3 h |
+| 4 | 1.8% | 36% / 5.6 h | 26% / 10.4 h |
+| 5 | 0.7% | 42% / 3.6 h | 31% / 7.5 h |
+<!-- sim:week:end -->
+
 ## Reading the tables
 
 **Why 3× and not more.** Under the steep table the 15% of the crowd with the two best tackle sets take 43% of the

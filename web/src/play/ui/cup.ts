@@ -64,7 +64,7 @@ function current(): Cup | null {
 
 export function initCup(root: HTMLElement): () => void {
   if (!CHAIN || !CUP_DEPLOYED) {
-    root.append(h('div', { class: 'card cup-off' }, h('h2', { text: 'Tournaments' }), h('p', { class: 'muted', text: CHAIN ? 'Tournaments are not deployed on this network yet.' : 'Tournaments run on the contracts: scores, casts and prizes live onchain. This is the local game, so there are none here.' })));
+    root.append(h('div', { class: 'card cup-off' }, h('h2', { text: 'Legacy tournaments' }), h('p', { class: 'muted', text: CHAIN ? 'Tournaments are not deployed on this network yet.' : 'Tournaments run on the contracts: scores, casts and prizes live onchain. This is the local game, so there are none here.' })));
     return () => undefined;
   }
   const sceneHost = h('div', { class: 'scene' });
@@ -611,8 +611,15 @@ function sideView(): HTMLElement[] {
     h(
       'section',
       { class: 'shop-sec' },
-      h('div', { class: 'dex-head' }, h('h3', { text: 'Tournaments' })),
-      cups.list.length === 0 ? h('p', { class: 'empty', text: 'No tournament has been announced yet.' }) : null,
+      h('div', { class: 'dex-head' }, h('h3', { text: 'Legacy tournaments' })),
+      h(
+        'p',
+        { class: 'muted small cup-legacy' },
+        'Tournaments are retired: no new ones are announced, and the game’s competition is the ',
+        h('a', { class: 'link', text: 'Season Hunt', attrs: { href: '#/hunt' } }),
+        '. Everything here is kept as it was: the standings stay, a tournament that is still open can be finished, and a prize you won can be claimed.',
+      ),
+      cups.list.length === 0 ? h('p', { class: 'empty', text: 'No tournament was ever announced here.' }) : null,
       h(
         'div',
         { class: 'cup-list' },
