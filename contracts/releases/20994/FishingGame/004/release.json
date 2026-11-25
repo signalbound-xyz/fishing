@@ -1,0 +1,61 @@
+{
+  "chainId": 20994,
+  "compiler": {
+    "evmVersion": "cancun",
+    "metadata": {
+      "bytecodeHash": "ipfs"
+    },
+    "optimizer": {
+      "enabled": true,
+      "runs": 100
+    },
+    "solc": "0.8.28+commit.7893614a",
+    "viaIR": true
+  },
+  "contract": "FishingGame",
+  "dependencies": {
+    "bottles": "0xe90E6D38A5531A7ce63eFea06E86229B977b781C",
+    "fishNft": "0x3Ec62368e2cEDE35C2027cf0BbDc78a0eCaAC037",
+    "pearl": "0xF843F0c048C521312371Eb8BdfEB1434A14CE794"
+  },
+  "immutableOffsets": {
+    "bottles": [
+      10841,
+      18934
+    ],
+    "fishNft": [
+      1076,
+      2323,
+      6980,
+      7226,
+      8860,
+      16066,
+      17298,
+      20467,
+      21030,
+      21898
+    ],
+    "pearl": [
+      2391,
+      3834,
+      6360,
+      8254,
+      9193,
+      10131,
+      11123
+    ]
+  },
+  "implementation": "0x0B92488eF38bA2F73Bc91aef02c94C2456fcE433",
+  "network": "Fluent Testnet",
+  "proxy": "0x743595326b8DbbFF85885503AaBA1515aa48A42b",
+  "proxyAdmin": "0x558A54DbE2b7C4548a1AB9017B45374e38Cd8784",
+  "release": 4,
+  "runtimeCodeHash": "0x549fc7afda5b8ffb8a381bcffe3a74b3cac1f573aaa5b8952fb7d42e513bfede",
+  "runtimeCodeSize": 23855,
+  "sha256": {
+    "abi.json": "cb8c5c8036e3d6f8b5700b0b58b9ffed5852e14ff41a9993cea8d15d7153905c",
+    "runtime.hex": "5487bf9563ec5c9ca716b3dd6ac4748aac9cefb3943c792ab408f7c924d85c32",
+    "storage-layout.json": "ef232e2caa124b09e2403f9cec53ac79e134f5126573f30436bebe398dc86d53"
+  },
+  "sourceCommit": "1f376e8a458791e25f7865755d02d3c3ae070e32"
+}
