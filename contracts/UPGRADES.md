@@ -464,10 +464,13 @@ The procedure above. For the first upgrade to 004, step 3 is the drain alone (re
 is not needed (the new game starts with casting open). Step 8 is: the live page cannot read the game until the
 new client is out.
 
-## Release 005 (in the source, not deployed): trophies are not sold, four more views in the lens, the reel fight
+## Release 005: trophies are not sold, four more views in the lens, the reel fight (built in, not switched on)
 
-**Nothing of this is on a network.** It is what `main` holds beyond release 004, and it goes out by the procedure
-above, with the owner's go-ahead.
+**On Fluent Testnet since 25 November 2026** (block 43,648,056): implementation
+`0x3B05f556F41431876e1A438B998567fc3D88B235`, built from commit `5311263`, `GameLens`
+`0x59f903d02d74b6eCA175d0B7002E21111595E183`. Casting was paused and no cast was in the water at the upgrade; it
+was resumed right after. **No reel judge is deployed or attached**: any bite is a catch, as before. Attaching one
+is a separate step with its own go-ahead ("The reel fight", steps 3 and 4).
 
 ```solidity
 mapping(uint256 => bool) internal isTrophy;  // appended after castingPaused: slot 29
@@ -496,9 +499,11 @@ error TrophyNotForSale();
 - **Who calls the removed views.** Nothing on the chain: the released `SeasonHunt`, `Tournaments`, `DailyRewards`
   and `Marketplace` call none of them. The web client reads none of them from the game. An indexer or script
   outside this repository that reads `weekTotal` or `dryCatches` from the game's address must move to the lens.
-- **Fish minted before the upgrade** are not marked. A trophy that exists already stays sellable.
-- **Not run from here:** `./preflight.sh fluent_testnet` (the releases against the chain and the fork rehearsal).
-  The offline preflight passes. Run the full one before the upgrade.
+- **Fish minted before the upgrade** are not marked. No trophy existed on Fluent Testnet at the upgrade (season
+  0 was still running, unwon), so every trophy there is one the game does not buy.
+- **Before the upgrade:** `./preflight.sh fluent_testnet` passed (the releases against the chain, and the upgrade
+  rehearsed on a fork: 5 players, 55 fish and 10 tournaments compared). After it: `./release.sh record` and
+  `./release.sh verify --source` (commit `5311263` rebuilds the bytecode on the chain exactly), `pnpm live:read`.
 
 `SeasonHunt` with tickets is a separate, plain contract and no part of this release: SEASON_HUNT.md, "What is in
 the source and not on the chain".
@@ -591,11 +596,11 @@ sent, and reported as a fight, not a failure. A drain therefore waits up to 600 
 **Procedure: two steps, each with the owner's go-ahead.**
 
 1. *Client first.* Publish the page of this release. It plays the old flow on release 004 and needs nothing from
-   the chain.
+   the chain. **Done on 25 November 2026.**
 2. *The game.* The procedure above, steps 1–8 (pause, drain, upgrade with the new lens, record, resume, sync the
    client). After it the game is release 005 with no judge: nothing a player can notice, except that trophies are
-   no longer bought.
-3. *The judge.* Deploy it; nothing asks it yet:
+   no longer bought. **Done on 25 November 2026** (see the top of this section).
+3. *The judge.* **Not done; needs the owner's go-ahead.** Deploy it; nothing asks it yet:
 
    ```bash
    forge script script/ReelJudge.s.sol --sig "deploy()" --rpc-url fluent_testnet --broadcast --private-key <key>
@@ -603,7 +608,7 @@ sent, and reported as a fight, not a failure. A drain therefore waits up to 600 
 
    Commit `deployments/`, sync and publish the client (`pnpm sync`), so that the page checks the judge it will
    meet (`catalogMismatches`: the tiers, the bands, the 600 blocks).
-4. *Switch on.* Pause, drain, attach, resume. `attach()` checks the judge against the game first (the fish
+4. *Switch on.* **Not done; needs the owner's go-ahead.** Pause, drain, attach, resume. `attach()` checks the judge against the game first (the fish
    contract, the tiers, the verifier, an empty recording that lands nothing) and refuses with a cast in the water
    or with casting open:
 
@@ -656,15 +661,15 @@ transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `Cre
 | after the optimizations below (never deployed by itself) | 23,340 | 1,236 |
 | release 002, on Fluent Testnet on 24 November 2026: the above plus the daily reward hook | 23,688 | 888 |
 | release 003, on Fluent Testnet until 25 November 2026: the above plus the Season Hunt hook | 24,293 | 283 |
-| release 004, on Fluent Testnet now: still water and the long window (565 bytes), five views moved to the lens | 23,855 | 721 |
-| release 005, in the source and not deployed: trophies are not sold (52 bytes), four more views moved to the lens, the reel fight (577 bytes) | 24,164 | 412 |
+| release 004, on Fluent Testnet on 25 November 2026: still water and the long window (565 bytes), five views moved to the lens | 23,855 | 721 |
+| release 005, on Fluent Testnet now: trophies are not sold (52 bytes), four more views moved to the lens, the reel fight (577 bytes) | 24,164 | 412 |
 
 `DailyRewards`, the plain contract that goes with the daily reward hook, is 3,802 bytes; `SeasonHunt` is 15,455 as
 deployed and 19,362 in the source, with tickets; `DrandBeacon` is 4,158. See "The daily reward" and "Season Hunt"
 above.
 
-**721 bytes are left on the chain, 412 in the source.** `GameLens`, a plain contract, is 13,951 bytes
-in release 004 and 14,144 in the source; `ReelJudge` is 1,404 and `FightVerifier` 2,018. The Season Hunt hook was first written to land the trophy through the game's own
+**412 bytes are left, on the chain and in the source.** `GameLens`, a plain contract, is 13,951 bytes
+in release 004 and 14,144 in release 005; `ReelJudge` is 1,404 and `FightVerifier` 2,018. The Season Hunt hook was first written to land the trophy through the game's own
 catch code (dex, XP, the `Caught` event): 2,078 bytes, which did not fit. What is in the source mints the fish and
 nothing else. The next feature that needs code in `FishingGame` needs one of the options under "What 1,236 bytes
 buy" first. Release 004 took the first part of option A to make room for itself and left 721; release 005 takes

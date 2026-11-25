@@ -241,13 +241,12 @@ same fish, XP and state whether it is made directly or through the hunt.
 shown, listed on the market or given away like any fish. It is not entered into the collection (dex), gives no XP
 and emits no `Caught` event: routing it through the game's own landing code cost 2,078 bytes and did not fit.
 
-**The game does not buy a trophy (in the source; release 004 on the chain still does).** `landFor` marks the fish
+**The game does not buy a trophy (release 005, on Fluent Testnet since 25 November 2026).** `landFor` marks the fish
 it mints (`isTrophy`, one mapping appended to the game's storage, read through `GameLens.isTrophy`), and
 `sellFish` reverts with `TrophyNotForSale` for a marked fish. Without this, each won season could mint the PEARL
 price of one fish of the target species for a catch no cast paid for; with it the hunt does not touch the PEARL
 supply at all, except to burn tickets. The mark stays with the fish whoever owns it. A trophy minted before the
-upgrade is not marked and the game still buys it: on Fluent Testnet that can only be the trophy of season 0, if
-it is won and claimed before the upgrade. The client leaves the trophies it knows of out of its Sell buttons
+upgrade would not be marked; on Fluent Testnet there is none, season 0 was still unwon at the upgrade. The client leaves the trophies it knows of out of its Sell buttons
 today, on either release.
 
 ## Who wins
@@ -650,14 +649,15 @@ A hunt with a prize of real value needs all of these; none is done, and two (the
 
 ## What is in the source and not on the chain
 
-Nothing below has been sent to a network. Each step changes a live contract and needs the owner's explicit
-go-ahead; `contracts/UPGRADES.md` has the procedure and "Release 005" there has the details.
+Except where the table says "done", nothing below has been sent to a network. Each step changes a live contract
+and needs the owner's explicit go-ahead; `contracts/UPGRADES.md` has the procedure and "Release 005" there has the
+details.
 
 | Change | In the source | On Fluent Testnet | To get it there |
 |---|---|---|---|
-| The game does not buy a trophy | `FishingGame` (`isTrophy`, `TrophyNotForSale`), `GameLens.isTrophy` | release 004 buys it | a game upgrade to release 005, with its lens and the client |
-| Four views moved from the game to the lens | `FishingGame`, `GameLens` | release 004 | the same upgrade |
-| The reel fight in ordinary fishing: a lost fight loses the fish (412 bytes left free in the game) | `FishingGame` (`reel(bytes)`, `setReelJudge`), `ReelJudge` | release 004: every bite is a catch | the same upgrade, then a judge deployed and attached as a second step (`contracts/UPGRADES.md`, "The reel fight") |
+| The game does not buy a trophy | `FishingGame` (`isTrophy`, `TrophyNotForSale`), `GameLens.isTrophy` | **done**: release 005, 25 November 2026 | — |
+| Four views moved from the game to the lens | `FishingGame`, `GameLens` | **done**: release 005 | — |
+| The reel fight in ordinary fishing: a lost fight loses the fish (412 bytes left free in the game) | `FishingGame` (`reel(bytes)`, `setReelJudge`), `ReelJudge` | release 005 with no judge: every bite is a catch | a judge deployed and attached (`contracts/UPGRADES.md`, "The reel fight", steps 3 and 4) |
 | A fight for the season's fish | nowhere: a design only ("The reel fight and the hunt" above) | a hit is decided by its draw alone | a new hunt contract, its client and keeper, between weeks |
 | Season tickets | `SeasonHunt` (`createTicketed`, `buyTicket`, `tickets`) | the first hunt, `0xb09eA27c…`, has none | deploy a new hunt and beacon (`deploy()`), then `attach()` it in place of the old one |
 | Six hours to record a hit | the season files | season 0 was created with one hour and keeps it | nothing: it applies to seasons created from now on, on either hunt |

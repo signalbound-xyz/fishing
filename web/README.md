@@ -21,7 +21,7 @@ could be forged). The client works the pending outcome out as soon as its block 
 (`src/game/chainOutcome.ts`, checked against vectors produced by the contract), plays a real bite, hook and fight
 on it, and settles afterwards. What a lost fight costs there depends on the game the network runs:
 
-- **Up to release 004** (Fluent Testnet today), and on release 005 with no reel judge attached: a lost fight is a
+- **Up to release 004**, and on release 005 with no reel judge attached (Fluent Testnet today): a lost fight is a
   retry, each easier, and the third is hauled in. The fight is the floating-point one in `src/game/minigame.ts`
   and decides nothing.
 - **Release 005 with a reel judge attached**: one fight per fish, in the integer machine the contract replays

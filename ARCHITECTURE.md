@@ -3,9 +3,10 @@
 This note covers one question: how far player skill can count in a game whose valuable outcomes are decided by a
 contract, when the only client is a browser the player controls.
 
-Two answers are in the code. Up to release 004, which is what Fluent Testnet runs, skill changes time and nothing
-else. Release 005, in the source and not deployed, lets the fight decide whether the fish is landed at all, once
-its owner attaches a reel judge ("The reel fight" below). Both are described; where they differ the text says
+Two answers are in the code. Up to release 004 skill changes time and nothing else. Release 005, on Fluent
+Testnet since 25 November 2026, lets the fight decide whether the fish is landed at all, once its owner attaches a
+reel judge ("The reel fight" below). No judge is attached there yet, so the testnet still plays by the first
+answer. Both are described; where they differ the text says
 which.
 
 ## The lifecycle
@@ -69,7 +70,7 @@ there is one, sets the hook window and the fight to the fish that is actually th
 A player who bypasses the client gains nothing but time: they can call `reel()` directly and get exactly the fish
 the contract would have given them anyway.
 
-## The reel fight (release 005, in the source; switched on by attaching a judge)
+## The reel fight (release 005; switched on by attaching a judge, which has not been done)
 
 **D. The contract replays the fight.** The tournaments already had a fight a contract can check: a deterministic
 machine in integers, driven by one bit per 50 ms tick ("is the player reeling?"), which the browser runs live and
