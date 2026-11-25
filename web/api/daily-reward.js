@@ -534,6 +534,11 @@ var fishingGameAbi = [
 					"name": "counted",
 					"type": "bool",
 					"internalType": "bool"
+				},
+				{
+					"name": "fight",
+					"type": "bool",
+					"internalType": "bool"
 				}
 			]
 		}],
@@ -1308,7 +1313,11 @@ var fishingGameAbi = [
 	{
 		"type": "function",
 		"name": "reel",
-		"inputs": [],
+		"inputs": [{
+			"name": "",
+			"type": "bytes",
+			"internalType": "bytes"
+		}],
 		"outputs": [],
 		"stateMutability": "nonpayable"
 	},
@@ -1710,6 +1719,17 @@ var fishingGameAbi = [
 	},
 	{
 		"type": "function",
+		"name": "setReelJudge",
+		"inputs": [{
+			"name": "judge",
+			"type": "address",
+			"internalType": "contract IReelJudge"
+		}],
+		"outputs": [],
+		"stateMutability": "nonpayable"
+	},
+	{
+		"type": "function",
 		"name": "setSeasonHunt",
 		"inputs": [{
 			"name": "hunt",
@@ -1988,6 +2008,31 @@ var fishingGameAbi = [
 	},
 	{
 		"type": "event",
+		"name": "Escaped",
+		"inputs": [
+			{
+				"name": "player",
+				"type": "address",
+				"indexed": true,
+				"internalType": "address"
+			},
+			{
+				"name": "locationId",
+				"type": "uint8",
+				"indexed": false,
+				"internalType": "uint8"
+			},
+			{
+				"name": "speciesId",
+				"type": "uint16",
+				"indexed": false,
+				"internalType": "uint16"
+			}
+		],
+		"anonymous": false
+	},
+	{
+		"type": "event",
 		"name": "FishSold",
 		"inputs": [
 			{
@@ -2187,6 +2232,11 @@ var fishingGameAbi = [
 	{
 		"type": "error",
 		"name": "EnergyFull",
+		"inputs": []
+	},
+	{
+		"type": "error",
+		"name": "FishOn",
 		"inputs": []
 	},
 	{

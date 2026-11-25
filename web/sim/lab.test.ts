@@ -5,7 +5,7 @@ import { LOCATIONS, QUALITIES, SPECIES } from '../src/game/content';
 import { hookWindow, reelParams } from '../src/game/minigame';
 import { locationSpecies } from '../src/game/progress';
 import { LURES, RODS } from '../src/tackle/catalog';
-import { PATTERNS, PLAYERS, REEL_CONFIGS, WORLD_NOW, career, castModel, contractQuality, cupRun, expectedTop, hookStats, hookWindowAt, mulberry32, reelAt, setFightsPerCell, weekEnergy, type Scenario, type World } from './lab';
+import { PATTERNS, PLAYERS, REEL_CONFIGS, WORLD_NOW, career, castModel, contractQuality, cupRun, expectedTop, hookStats, hookWindowAt, judgeFightStats, mulberry32, reelAt, setFightsPerCell, weekEnergy, type Scenario, type World } from './lab';
 import { WORLDS } from './scenarios';
 
 // 150 fights per cell instead of 1,500: these tests check the bookkeeping, not the rates
@@ -73,6 +73,32 @@ describe('cast model', () => {
       expect(local.landed + local.bite * (local.hookLost + local.fightLost)).toBeCloseTo(local.bite, 10);
       expect(chain.lines.reduce((a, l) => a + l.p, 0)).toBeCloseTo(1, 10);
     }
+  });
+
+  it('under the reel judge a bite is a fish only if its one fight is won, and tackle and grades are the contract\'s', () => {
+    for (const loc of LOCATIONS) {
+      const lo = { rod: RODS[0], lure: null };
+      const chain = castModel('chain', 'beginner', 'current', WORLD_NOW, loc.id, lo);
+      const strict = castModel('strict', 'beginner', 'current', WORLD_NOW, loc.id, lo);
+      // the same bites and the same fish; some of them get away, and only in the fight
+      expect(strict.bite).toBe(chain.bite);
+      expect(strict.lines.map((l) => [l.id, l.p])).toEqual(chain.lines.map((l) => [l.id, l.p]));
+      expect(strict.landed).toBeLessThanOrEqual(chain.landed);
+      expect(strict.hookLost).toBe(0);
+      expect(strict.landed + strict.bite * strict.fightLost).toBeCloseTo(strict.bite, 10);
+      // what is landed is worth what it was: the fight decides whether there is a fish, not how good it is
+      for (const l of strict.lines) expect(l.points).toBeCloseTo(chain.lines.find((x) => x.id === l.id)!.points, 10);
+      expect(strict.xp).toBeLessThanOrEqual(chain.xp);
+      expect(strict.gross).toBeLessThanOrEqual(chain.gross);
+      // what the cast costs does not come back with a lost fish
+      expect(strict.upkeep).toBe(chain.upkeep);
+    }
+    // a harder fight is not landed more often, and a wider band not less often
+    for (const p of ['beginner', 'average', 'experienced'] as const) {
+      for (let d = 1; d <= 5; d++) expect(judgeFightStats(p, d, 25_000).land).toBeLessThanOrEqual(judgeFightStats(p, d - 1, 25_000).land + 0.05);
+      expect(judgeFightStats(p, 5, 37_500).land).toBeGreaterThanOrEqual(judgeFightStats(p, 5, 15_000).land);
+    }
+    expect(judgeFightStats('experienced', 5, 25_000).land).toBeGreaterThan(judgeFightStats('beginner', 5, 25_000).land);
   });
 
   it('a payout multiplier scales what fish sell for, and nothing else', () => {
@@ -166,6 +192,21 @@ describe('careers', () => {
     expect(local.landed).toBeLessThan(local.bites);
     // every bite ends one way: landed, or lost once at the hook or in the fight
     expect(local.landed + local.hookMissed + local.fightsLost).toBe(local.bites);
+  });
+
+  it('under the reel judge every bite is landed or lost in its one fight, and a lost fish pays nothing', () => {
+    const r = career(scenario({ rules: 'strict', player: 'beginner', days: 60 }), 9);
+    expect(r.fightsLost).toBeGreaterThan(0);
+    // a missed hook is another bite of the same fish, not a lost one
+    expect(r.landed + r.fightsLost).toBe(r.bites);
+    expect(r.hookedByRarity.reduce((a, x) => a + x, 0)).toBe(r.bites);
+    expect(r.lostByRarity.reduce((a, x) => a + x, 0)).toBe(r.fightsLost);
+    for (let i = 0; i < 6; i++) expect(r.lostByRarity[i]).toBeLessThanOrEqual(r.hookedByRarity[i]);
+    expect(r.save.stats.catches).toBe(r.landed);
+    expect(r.save.pearl).toBe(r.earned + r.rewards - spentAll(r));
+    // the same seed under the old rule loses nothing
+    const before = career(scenario({ player: 'beginner', days: 60 }), 9);
+    expect(before.lostByRarity).toEqual([0, 0, 0, 0, 0, 0]);
   });
 
   it('a bigger bar helps the once-a-day player and not the one who never wastes energy', () => {

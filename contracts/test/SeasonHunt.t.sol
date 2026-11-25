@@ -92,8 +92,13 @@ abstract contract HuntBase is TournamentsBase {
 
     /// @dev One seasonal cast. A cast of `who` that is still in the water is waited out first.
     function _cast(uint256 id, address who, uint8 water) internal returns (uint64 seq) {
+        // the cast before this one is reeled in first, as a player does: a new cast does not close one with a fish
+        // that can still be fought for
         uint64 pending = game.castOf(who).targetBlock;
-        if (pending != 0 && vm.getBlockNumber() <= pending) _mine(pending + 1 - vm.getBlockNumber());
+        if (pending != 0) {
+            if (vm.getBlockNumber() <= pending) _mine(pending + 1 - vm.getBlockNumber());
+            _reelIn(who);
+        }
         vm.prank(who);
         seq = hunt.cast(id, water);
     }
@@ -672,8 +677,7 @@ contract SeasonHuntTest is HuntBase {
         uint64 target = game.castOf(alice).targetBlock;
         vm.roll(target + 1);
         vm.setBlockhash(target, entropy);
-        vm.prank(alice);
-        game.reel();
+        _reelIn(alice);
         (uint256[] memory ids, FishNFT.Fish[] memory list) = fish.fishOf(alice);
         return keccak256(abi.encode(game.playerOf(alice), ids, list, pearl.balanceOf(alice), fish.nextId(), game.totalCasts()));
     }
@@ -698,6 +702,83 @@ contract SeasonHuntTest is HuntBase {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, owner));
         game.castFor(bob, 0);
+    }
+
+    // ------------------------------------------------------------------ the hunt and the reel fight
+
+    /// @dev Finds a hash for the randomness of `who`'s seasonal cast under which the cast holds a fish that has
+    ///      to be fought and the attempt hooks the season's target as `hit` says.
+    function _fishOnAndTarget(uint256 id, uint64 seq, address who, bool hit) internal {
+        uint256 gameTarget = game.castOf(who).targetBlock;
+        uint256 huntTarget = beacon.targetBlock(hunt.attemptOf(id, seq).blockNumber);
+        uint256 last = gameTarget > huntTarget ? gameTarget : huntTarget;
+        if (vm.getBlockNumber() <= last) _mine(last + 1 - vm.getBlockNumber());
+        for (uint256 i;; i++) {
+            bytes32 entropy = keccak256(abi.encode("fish on", id, seq, i));
+            if (_hits(id, seq, entropy) != hit) continue;
+            vm.setBlockhash(gameTarget, entropy);
+            vm.setBlockhash(huntTarget, entropy);
+            // a stranger's settlement is refused exactly when a fish is on the line; otherwise it would go through
+            uint256 snap = vm.snapshotState();
+            vm.prank(carol);
+            try game.reelFor(who) {
+                vm.revertToState(snap);
+            } catch (bytes memory why) {
+                if (bytes4(why) == FishingGame.FishOn.selector) return;
+                revert("the cast could not be looked at");
+            }
+        }
+    }
+
+    /// @dev A seasonal cast is an ordinary cast: with a fish of the cast before it still on the line the game
+    ///      refuses it, and nothing of the attempt is kept. Not an attempt, not one of the day's.
+    function test_a_fish_on_the_line_holds_back_the_next_seasonal_cast() public {
+        uint256 id = _open();
+        vm.prank(alice);
+        uint64 seq = hunt.cast(id, 0);
+        _fishOnAndTarget(id, seq, alice, false);
+        uint256 left = hunt.attemptsLeft(id, alice);
+
+        vm.prank(alice);
+        vm.expectRevert(FishingGame.FishOn.selector);
+        hunt.cast(id, 0);
+        assertEq(hunt.season(id).attempts, 1, "a refused cast was numbered");
+        assertEq(hunt.attemptsLeft(id, alice), left, "a refused cast used one of the day's attempts");
+
+        // fought and landed, the line is free and the next seasonal cast goes through
+        _reelIn(alice);
+        vm.prank(alice);
+        assertEq(hunt.cast(id, 0), 1);
+    }
+
+    /// @dev WHAT THE DEPLOYED HUNT DOES, NOT WHAT IS WANTED. The target is a draw of its own: an attempt that
+    ///      hooked it wins the season whether or not the fish of that same cast was landed, and no fight is asked
+    ///      for the target itself. Making the trophy and the prize depend on a fight needs a new hunt contract
+    ///      (SEASON_HUNT.md, "The reel fight and the hunt"); when that is built this test turns around.
+    function test_today_a_hit_stands_although_the_casts_own_fish_got_away() public {
+        uint256 id = _open();
+        vm.prank(alice);
+        uint64 seq = hunt.cast(id, 0);
+        _fishOnAndTarget(id, seq, alice, true);
+
+        // alice loses the fight for the ordinary fish of that cast: no fish, no progress
+        uint256 xp = game.playerOf(alice).xp;
+        vm.prank(alice);
+        game.reel("");
+        assertEq(fish.balanceOf(alice), 0);
+        assertEq(game.playerOf(alice).xp, xp);
+
+        // the hit is recorded all the same, by anyone, and the season is hers
+        vm.prank(bob);
+        hunt.settle(id, seq, "");
+        assertEq(hunt.season(id).winnerSeq, seq);
+        _pastWindow();
+        vm.prank(alice);
+        assertEq(hunt.claim(id), HUNT_PRIZE);
+        assertEq(blend.balanceOf(alice), HUNT_PRIZE);
+        assertEq(fish.balanceOf(alice), 1, "the trophy comes with the prize");
+        (, FishNFT.Fish[] memory list) = fish.fishOf(alice);
+        assertEq(list[0].speciesId, TAIMEN);
     }
 
     // ------------------------------------------------------------------ hooking the target
@@ -738,8 +819,7 @@ contract SeasonHuntTest is HuntBase {
         assertFalse(hunt.season(id).hooked);
         assertEq(uint8(hunt.status(id)), uint8(SeasonHunt.Status.Active));
         // and the ordinary catch of that cast is landed as always
-        vm.prank(alice);
-        game.reel();
+        _reelIn(alice);
         assertEq(game.castOf(alice).targetBlock, 0);
     }
 
@@ -907,6 +987,7 @@ contract SeasonHuntTest is HuntBase {
             if (game.currentEnergy(p) == 0) continue;
             uint64 pending = game.castOf(p).targetBlock;
             if (pending != 0 && vm.getBlockNumber() <= pending) continue;
+            if (pending != 0) _reelIn(p);
             vm.prank(p);
             uint64 seq = hunt.cast(id, 0);
             uint256 t = hunt.attemptOf(id, seq).time;

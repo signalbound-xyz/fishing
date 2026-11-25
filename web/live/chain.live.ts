@@ -18,7 +18,7 @@ import { createPublicClient, encodeFunctionData, http, pad, toHex, type Hex } fr
 import { describe, expect, it } from 'vitest';
 import { gameLensAbi } from '../src/abi';
 import { huntHit } from '../src/game/hunt';
-import { CAST_OF_SELECTOR, decodePlayerView, isRelease004 } from '../src/game/release';
+import { CAST_OF_SELECTOR, decodePlayerView, releaseOf, type GameRelease } from '../src/game/release';
 import { runKeeper } from '../src/server/keeper';
 import { drandSignature, keeperChain } from '../src/server/keeperChain';
 
@@ -86,19 +86,25 @@ describe('the deployed lens', () => {
   it('answers the page’s reads in the shape this build decodes, on the release the network runs', async () => {
     // the page asks the game which release it is, and reads the lens in that release's shape (game/release.ts)
     const castOf = await pub.call({ to: dep.game, data: `${CAST_OF_SELECTOR}${pad('0x00', { size: 32 }).slice(2)}` });
-    const is004 = isRelease004(castOf.data);
+    const release = releaseOf(castOf.data);
     const catalog = await pub.readContract({ ...lens, functionName: 'catalog' });
     expect(catalog.locations.length).toBeGreaterThan(0);
     expect(catalog.species.length).toBeGreaterThan(0);
+    // the lens is read in the shape of the release it was built for: one that knows fights says how long one may take
+    const lensRelease: GameRelease = await pub.readContract({ ...lens, functionName: 'fightBlocks' }).then(
+      () => 5 as const,
+      () => (release >= 4 ? 4 : 3),
+    );
     // any address will do: a wallet that never played is read the same way
     const answer = await pub.call({ to: dep.lens, data: encodeFunctionData({ abi: gameLensAbi, functionName: 'playerView', args: ['0x000000000000000000000000000000000000dEaD'] }) });
-    const view = decodePlayerView(answer.data!, is004);
+    const view = decodePlayerView(answer.data!, lensRelease);
     expect(view.energyNow).toBeGreaterThan(0n);
     expect(Number(view.blockNumber)).toBeGreaterThan(0);
     expect(view.bestByLocation).toHaveLength(catalog.locations.length);
     expect(view.dex).toHaveLength(catalog.species.length);
-    if (!is004) expect(view.castingPaused).toBe(false);
-    console.log(`[live] the game is release ${is004 ? '004 or later' : '003 or earlier'}; lens ${dep.lens}: ${catalog.locations.length} water(s), ${catalog.species.length} species`);
+    if (release < 4) expect(view.castingPaused).toBe(false);
+    if (lensRelease < 5) expect(view.cast.fight).toBe(false);
+    console.log(`[live] the game is release ${release === 3 ? '003 or earlier' : release === 4 ? '004' : '005 or later'}, its lens ${dep.lens} is built for ${lensRelease}: ${catalog.locations.length} water(s), ${catalog.species.length} species`);
   });
 });
 

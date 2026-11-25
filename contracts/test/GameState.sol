@@ -4,6 +4,10 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {FishingGame} from "../src/FishingGame.sol";
 import {FishNFT} from "../src/FishNFT.sol";
+import {FightVerifier} from "../src/FightVerifier.sol";
+import {ReelJudge, IReelJudge} from "../src/ReelJudge.sol";
+import {VmSafe} from "forge-std/Vm.sol";
+import {FightBot} from "./FightBot.sol";
 
 /// @dev The game's state, read the same way from every release.
 ///
@@ -24,13 +28,68 @@ abstract contract GameStateReader is Test {
     uint256 internal constant WEEK_TOTAL_SLOT = 23;
     uint256 internal constant WEEK_PLAYERS_SLOT = 24;
 
-    /// @dev `castOf`. Releases up to 003 answer with six fields, later ones with seven (`counted`): the missing
-    ///      one reads as false.
+    /// @dev `castOf`. Releases up to 003 answer with six fields, 004 with seven (`counted`), later ones with eight
+    ///      (`fight`): a missing one reads as false.
     function _castOf(FishingGame g, address who) internal view returns (FishingGame.Cast memory) {
         (bool ok, bytes memory ret) = address(g).staticcall(abi.encodeWithSignature("castOf(address)", who));
         require(ok, "castOf");
-        if (ret.length < 224) ret = bytes.concat(ret, bytes32(0));
+        while (ret.length < 256) ret = bytes.concat(ret, bytes32(0));
         return abi.decode(ret, (FishingGame.Cast));
+    }
+
+    /// @dev `who` lands the fish on their line in game `g`, whose judge is `judge`, as a player who fights well
+    ///      would; with nothing to fight for the cast is simply settled.
+    ///
+    ///      Which fight it is, is not worked out here a second time; the game is asked. The cast is first settled
+    ///      with an empty recording while the judge is replaced by a contract that only reverts. With nothing to
+    ///      fight for that settles the cast and is all there is to do. With a fish on the line the game turns
+    ///      to the judge and the whole call fails, leaving no trace (no state, no event); what it asked is read
+    ///      from the call, the fight is played and the cast is settled for good with the recording.
+    function _landWith(FishingGame g, ReelJudge judge, address who) internal {
+        uint256 free;
+        assembly ("memory-safe") {
+            free := mload(0x40)
+        }
+        bytes memory code = address(judge).code;
+        vm.etch(address(judge), hex"5f5ffd"); // PUSH0 PUSH0 REVERT
+        vm.startStateDiffRecording();
+        vm.prank(who);
+        (bool ok, bytes memory err) = address(g).call(abi.encodeCall(FishingGame.reel, ("")));
+        VmSafe.AccountAccess[] memory seen = vm.stopAndReturnStateDiff();
+        vm.etch(address(judge), code);
+        if (ok) return;
+        uint256[4] memory q;
+        bool asked;
+        for (uint256 i; i < seen.length && !asked; i++) {
+            bytes memory args = seen[i].data;
+            if (seen[i].account != address(judge) || args.length < 164 || bytes4(args) != IReelJudge.landed.selector) continue;
+            asked = true;
+            assembly ("memory-safe") {
+                mstore(q, mload(add(args, 36)))
+                mstore(add(q, 32), mload(add(args, 68)))
+                mstore(add(q, 64), mload(add(args, 100)))
+                mstore(add(q, 96), mload(add(args, 132)))
+            }
+        }
+        if (!asked) _bubble(err);
+        (uint256 seed, uint256 speciesId, uint256 locationId, int256 rodCatch) = (q[0], q[1], q[2], int256(q[3]));
+        // everything above is done with: a long test reels in thousands of times, and memory is never given back
+        assembly ("memory-safe") {
+            mstore(0x40, free)
+        }
+        (uint256 fightSeed, uint256 difficulty, uint256 green) = judge.fightOf(seed, speciesId, locationId, rodCatch);
+        (bytes memory inputs,) = FightBot.play(FightVerifier(address(judge.verifier())), fightSeed, difficulty, green);
+        vm.prank(who);
+        g.reel(inputs);
+        assembly ("memory-safe") {
+            mstore(0x40, free)
+        }
+    }
+
+    function _bubble(bytes memory err) internal pure {
+        assembly ("memory-safe") {
+            revert(add(err, 32), mload(err))
+        }
     }
 
     function _mapSlot(uint256 key, uint256 mappingSlot) internal pure returns (uint256) {

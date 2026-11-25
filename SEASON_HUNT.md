@@ -410,7 +410,7 @@ see the balance report for why, and for the base chance by expected crowd.
 | Threat | Assessment |
 |---|---|
 | **Sybil: many wallets in one hand** | **Open in a free season; priced, not closed, in a ticketed one.** A per-wallet cap does not limit a person. Energy is free and refills, so a wallet costs gas only. See the numbers below. Levers that exist: `minLevel` (each wallet must be played up first, once), `rods` (each wallet must own a paid rod, once), and a ticket in PEARL burned by every wallet in every season (in the source, not on the chain). Not built: identity attestation |
-| Bots | A cast needs no skill, so a script is just a player who never misses a day. Bounded per wallet by the cap and energy; many wallets is the Sybil row |
+| Bots | A seasonal cast needs no skill for the target (its draw asks for no fight: "The reel fight and the hunt"), so a script is just a player who never misses a day. Bounded per wallet by the cap and energy; many wallets is the Sybil row |
 | Sequencer picks the randomness | Possible with the block-hash beacon (testnet only, enforced). Not possible with drand unless block timestamps lag by more than the margin; the keeper measures that lag on every pass ("If the clock lags") |
 | A hit nobody records in time | A hit counts only if `settle` is sent within the season's settle window after the cast; after that it is gone, by design (it is what makes the result final). The winner's own page sends it, the keeper sends it for a closed tab, and the page of a returning player finds its casts on the chain for the whole window. The season files give six hours, so both would have to be away that long. The price of a long window: the result is final, and the prize claimable, that much later |
 | Front-running a settlement | Gains nothing: the prize goes to the attempt's caster, whoever sends the proof |
@@ -544,6 +544,87 @@ report, and change the prize to what the sponsor actually holds.
 - History is read from the contract a page at a time (`list(player, offset, limit)`); nothing is duplicated off
   the chain.
 
+## The reel fight and the hunt
+
+Release 005 of the game can make the fight decide whether a hooked fish is landed (`contracts/UPGRADES.md`, "The
+reel fight"; [ARCHITECTURE.md](ARCHITECTURE.md)). The hunt in the source and on the chain was written before that.
+This is how the two meet, what is wrong with it, and what closing the gap takes. **The hunt was not changed.**
+
+### What happens today, with a judge attached to the game
+
+- **A seasonal cast is an ordinary cast**, so its ordinary fish has to be fought like any other and is lost with
+  a lost fight. `test_the_ordinary_catch_is_the_same_through_the_hunt` still holds.
+- **A fish on the line holds back the next seasonal cast.** `hunt.cast` calls `game.castFor`, which settles the
+  cast before it as `cast` does, and with a fish still in its 600 blocks that reverts `FishOn`. The whole
+  seasonal cast reverts: no attempt is numbered and none of the day's attempts is used
+  (`test_a_fish_on_the_line_holds_back_the_next_seasonal_cast`). The player fights the fish, or reels in the line,
+  and casts again.
+- **The target does not ask for a fight.** It is a draw of its own, proven to `settle` by the beacon. An attempt
+  that hooked the target wins the season, the prize and the trophy **whether or not the fish of that same cast was
+  landed, and without any fight for the target itself**
+  (`test_today_a_hit_stands_although_the_casts_own_fish_got_away`, named for what it is). That is not the rule
+  wanted: a player who fails a required reeling challenge should not take the trophy or the BLEND because the draw
+  came up.
+
+### Why this is not a small change
+
+1. **The hunt is a plain contract and cannot be changed.** Another rule is another hunt, deployed and attached in
+   place of this one (`setSeasonHunt`); the old one keeps its seasons, and prizes won there stay claimable there.
+2. **`settle` is open to everyone, and the winner's rule and its finality rest on that.** "Anyone can record a
+   hit for anyone" is why nobody can hide a hit, why the keeper can record hits for closed tabs, and why who sends
+   the transaction never matters. A fight cannot be open to everyone: the fight's seed is public, so whoever
+   settles could compute a recording that lands it, and a keeper that did so for the players would make the
+   fight a formality. The fight has to be the winner's own transaction, and then a closed tab loses the prize.
+3. **A lost fight has to be remembered.** Today an attempt is either recorded as the hit or not recorded. With a
+   fight there is a third outcome, hooked and lost, and it has to be written down, or the same attempt can be
+   fought again with another recording.
+4. **The hunt has nothing to cut a fight from yet.** It needs the target's fight (a seed from the attempt's
+   randomness, a difficulty, the band of the rod the cast was made with) and a way to replay it. The pieces
+   exist: `Attempt` stores the rod, the lure and the water; `game.loadout` gives the rod's catch there;
+   `ReelJudge.fightOf` / `landed` and `FightVerifier.replay` do the rest. Wiring them in is new code in the hunt.
+5. **A shortcut would be unsafe.** Checking in the page, or in the keeper, that "the fish was landed" before
+   recording a hit decides a prize off the chain, and anyone can call `settle` directly. Making the hit depend on
+   the ordinary catch of the same cast needs the game to keep the result of every settled cast, which it does not
+   (the cast is deleted) and has 412 bytes of room for.
+
+### The migration, as its own step
+
+A new `SeasonHunt` (the source has 5,193 bytes of room) with:
+
+```solidity
+// the winner's own transaction: the proof of the hit and the recording of the fight for the target
+function settle(uint256 id, uint64 seq, bytes calldata proof, bytes calldata recording) external;
+mapping(uint256 id => mapping(uint64 seq => bool)) public lostOnTheLine;   // hooked, fought, lost: final
+```
+
+- `msg.sender` must be the attempt's player. The fight is `judge.landed(keccak256(attempt seed, "target"), target
+  species, water, rod catch from game.loadout(attempt's rod, lure, 0, water), recording)`. A recording that lands
+  it records the hit as today. One that does not sets `lostOnTheLine` and emits an event, without reverting, so
+  that a lost fight that was sent cannot be tried again.
+- **The order of winners does not change.** The rule becomes: the lowest-numbered attempt that hooked the target
+  *and was landed* within its settle window. The window stays per attempt and bounded, so the argument for
+  finality is the one in "Who wins": attempts with lower numbers run out no later than the recorded one. A hit
+  that is lost on the line is the same, to everybody else, as a hit that was never recorded. The invariant suite
+  and `testFuzz_earlier_attempts_never_outlast_later_ones` carry over; they need the third outcome added.
+- **Prizes already final are not touched.** They are in the old contract, which nothing here changes. Replace the
+  hunt between weeks, with no season running or closing on the old one, as for the ticketed hunt
+  ("What is in the source and not on the chain").
+- **The keeper stops recording hits** on the new hunt (it has no recording and must not compute one). It can
+  still report hits that wait for their players. A hit whose player does not come back within the settle window
+  is lost: six hours in the season files.
+- **The client** plays a second fight after a seasonal cast that hooked the target, the season's fish, and sends
+  it with the proof. That is a new screen and a new state to recover after a reload.
+- **Decide first how hard the target fights.** By the game's rule a Legendary target outside calm water is
+  difficulty 5, which the model players of `web/REEL_BALANCE.md` lose 72%, 50% and 24% of the time with the
+  starter rod, while a script loses none. For a prize that is a worse trade than for PEARL: the fight would hand
+  the season to whoever automates it. A fixed, moderate difficulty per season (a field of `Rules`) is the
+  alternative to weigh.
+- **What it still does not do:** tell a person from a script. Everything under "Sybil" and "Bots" in the security
+  assessment stands, and the fight adds a reason to script.
+
+Until that is built and deployed, the honest statement of the rule is: *the ordinary fish of a seasonal cast can
+be lost in its fight; the season's fish cannot.*
+
 ## Before a public launch
 
 A hunt with a prize of real value needs all of these; none is done, and two (the keeper and the ticket) are built.
@@ -575,7 +656,9 @@ go-ahead; `contracts/UPGRADES.md` has the procedure and "Release 005" there has 
 | Change | In the source | On Fluent Testnet | To get it there |
 |---|---|---|---|
 | The game does not buy a trophy | `FishingGame` (`isTrophy`, `TrophyNotForSale`), `GameLens.isTrophy` | release 004 buys it | a game upgrade to release 005, with its lens and the client |
-| Four views moved from the game to the lens (989 bytes free instead of 721) | `FishingGame`, `GameLens` | release 004 | the same upgrade |
+| Four views moved from the game to the lens | `FishingGame`, `GameLens` | release 004 | the same upgrade |
+| The reel fight in ordinary fishing: a lost fight loses the fish (412 bytes left free in the game) | `FishingGame` (`reel(bytes)`, `setReelJudge`), `ReelJudge` | release 004: every bite is a catch | the same upgrade, then a judge deployed and attached as a second step (`contracts/UPGRADES.md`, "The reel fight") |
+| A fight for the season's fish | nowhere: a design only ("The reel fight and the hunt" above) | a hit is decided by its draw alone | a new hunt contract, its client and keeper, between weeks |
 | Season tickets | `SeasonHunt` (`createTicketed`, `buyTicket`, `tickets`) | the first hunt, `0xb09eA27c…`, has none | deploy a new hunt and beacon (`deploy()`), then `attach()` it in place of the old one |
 | Six hours to record a hit | the season files | season 0 was created with one hour and keeps it | nothing: it applies to seasons created from now on, on either hunt |
 | The keeper's clock check, the client's ticket and trophy handling, the longer search for one's own casts | `web/` | the keeper is not running | ship the client; switch the keeper on ([web/KEEPER.md](web/KEEPER.md)) |

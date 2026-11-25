@@ -6,10 +6,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GameSetup} from "./GameSetup.sol";
 import {PearlExchange} from "../src/PearlExchange.sol";
 import {Tournaments} from "../src/Tournaments.sol";
-import {FightVerifier} from "../src/FightVerifier.sol";
+import {FightVerifier, IFightVerifier} from "../src/FightVerifier.sol";
+import {ReelJudge} from "../src/ReelJudge.sol";
 
 /// @notice A complete, fresh deployment: tokens, market, the game and the tournaments (both behind proxies), the
-///         lens and the BLEND exchange. Everything starts empty. Later versions of the game or the tournaments are
+///         lens, the BLEND exchange and the judge of the reel fight, attached: a fish has to be reeled in from the
+///         first cast. Everything starts empty. Later versions of the game or the tournaments are
 ///         upgrades of the proxies (script/Upgrade.s.sol), which keep all player state.
 ///         BLEND_TOKEN=0x… forge script script/Deploy.s.sol --rpc-url <rpc> --broadcast --private-key <key>
 ///         Optional: PEARL_PER_BLEND (default 100, for an 18-decimal BLEND), BLEND_TREASURY (default: the sender).
@@ -25,6 +27,8 @@ contract Deploy is Script {
         PearlExchange exchange = new PearlExchange(sender, d.pearl, blend, rate, vm.envOr("BLEND_TREASURY", sender));
         d.pearl.setMinter(address(exchange), true);
         (Tournaments tournaments, FightVerifier verifier) = GameSetup.deployTournaments(sender, d.game, d.fish, blend);
+        ReelJudge judge = GameSetup.deployJudge(IFightVerifier(address(verifier)), d.fish);
+        d.game.setReelJudge(judge);
         vm.stopBroadcast();
 
         string memory k = "deployment";
@@ -39,6 +43,7 @@ contract Deploy is Script {
         vm.serializeAddress(k, "exchange", address(exchange));
         vm.serializeAddress(k, "tournaments", address(tournaments));
         vm.serializeAddress(k, "fightVerifier", address(verifier));
+        vm.serializeAddress(k, "reelJudge", address(judge));
         string memory json = vm.serializeAddress(k, "game", address(d.game));
         string memory path = string.concat(vm.projectRoot(), "/../deployments/", vm.toString(block.chainid), ".json");
         vm.writeJson(json, path);

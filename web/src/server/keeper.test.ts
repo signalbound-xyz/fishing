@@ -32,6 +32,8 @@ function world(o: WorldOptions = {}) {
     seasons: [] as KeeperSeason[],
     attempts: [] as SeasonAttempt[],
     casts: new Map<string, WaterCast>(),
+    /** players whose cast hooked a fish (the others hold a miss or a bottle) */
+    fish: new Set<string>(),
     casted: [] as { player: Address; targetBlock: bigint; block: bigint }[],
     /** randomness by group key: a drand round or a block */
     randomness: new Map<string, Hex>(),
@@ -68,14 +70,17 @@ function world(o: WorldOptions = {}) {
         st.asked.logs.push([from, to]);
         return st.casted.filter((c) => c.block >= from && c.block <= to).map(({ player, targetBlock }) => ({ player, targetBlock }));
       },
-      castOf: async (p) => st.casts.get(p.toLowerCase()) ?? { targetBlock: 0n, counted: false },
+      castOf: async (p) => st.casts.get(p.toLowerCase()) ?? { targetBlock: 0n, counted: false, fight: false },
       async reelFor(p) {
         st.failReel?.(p);
         const c = st.casts.get(p.toLowerCase());
         if (!c || c.targetBlock === 0n) throw new Error('NoActiveCast');
         if (st.head <= c.targetBlock) throw new Error('TooEarly');
+        // a fish that has to be fought is its player's for 600 blocks after the cast's block (FishingGame._escaped)
+        if (c.fight && st.fish.has(p.toLowerCase()) && st.head + 1n <= c.targetBlock + 600n) return 'fishOn';
         st.casts.delete(p.toLowerCase());
         st.reeled.push(p);
+        return 'reeled';
       },
       water: async () => (o.counts === false ? null : { paused: st.paused, inWater: [...st.casts.values()].filter((c) => c.counted).length }),
       operator: async () => (o.key === false ? null : { address: OPERATOR, balanceWei: st.balance }),
@@ -141,10 +146,14 @@ function world(o: WorldOptions = {}) {
     if (beacon.drand) st.signed.add(drandRound(beacon.drand, a.time));
     return a;
   };
-  /** A cast in the water whose randomness block is `age` blocks under the head. */
-  const cast = (player: Address, age: number, counted = true): void => {
+  /**
+   * A cast in the water whose randomness block is `age` blocks under the head. `fight`: made under a reel judge,
+   * and holding a fish ('fish') or a miss or a bottle ('other').
+   */
+  const cast = (player: Address, age: number, counted = true, fight?: 'fish' | 'other'): void => {
     const targetBlock = st.head - BigInt(age);
-    st.casts.set(player.toLowerCase(), { targetBlock, counted });
+    st.casts.set(player.toLowerCase(), { targetBlock, counted, fight: fight !== undefined });
+    if (fight === 'fish') st.fish.add(player.toLowerCase());
     st.casted.push({ player, targetBlock, block: targetBlock - 2n });
   };
   const run = (opts: RunOptions = {}) => runKeeper(k, opts);
@@ -389,7 +398,7 @@ describe('casts in the water', () => {
     w.cast(addr(1), 7_800);
     w.st.casts.delete(addr(1)); // reeled in by the player
     w.cast(addr(2), 7_800);
-    w.st.casts.set(addr(2), { targetBlock: w.st.head - 10n, counted: true }); // a new cast since
+    w.st.casts.set(addr(2), { targetBlock: w.st.head - 10n, counted: true, fight: false }); // a new cast since
     const r = await w.run();
     expect(w.st.reeled).toEqual([]);
     expect(r.casts.seen).toBe(0);
@@ -422,6 +431,47 @@ describe('casts in the water', () => {
     expect(w.st.reeled).toContain(addr(5));
     expect(again.water).toEqual({ paused: true, inWater: 0 });
     expect(again.notes).toEqual([]);
+  });
+
+  it('leaves a fish to the player who is fighting it, and clears it once the fight is over', async () => {
+    const w = world();
+    w.st.paused = true;
+    w.cast(addr(1), 40, true, 'fish'); // on the line: only its player can reel it in
+    w.cast(addr(2), 40, true, 'other'); // a miss or a bottle: anyone lands it
+    w.cast(addr(3), 599, true, 'fish'); // the block this pass is mined in is the fight's last
+    w.cast(addr(4), 600, true, 'fish'); // out of time: the fish is gone, the cast is cleared
+    const r = await w.run({ drain: true });
+    expect(w.st.reeled.sort()).toEqual([addr(2), addr(4)]);
+    expect(r.casts).toMatchObject({ seen: 4, reeled: 2, fighting: 2, left: 2 });
+    expect(r.failed).toBe(0);
+    expect(r.water).toEqual({ paused: true, inWater: 2 });
+    expect(r.notes).toHaveLength(1);
+    expect(r.notes[0]).toContain('2 fish on the line');
+    expect(r.notes[0]).toContain('run the drain again');
+    // ten minutes later nobody is fighting any more
+    w.st.head += 600n;
+    const again = await w.run({ drain: true });
+    expect(again.casts).toMatchObject({ reeled: 2, fighting: 0, left: 0 });
+    expect(again.water).toEqual({ paused: true, inWater: 0 });
+    expect(again.notes).toEqual([]);
+  });
+
+  it('rescues a cast that had a fight in it like any other: the fight is long over by then', async () => {
+    const w = world();
+    w.cast(addr(1), 7_500, true, 'fish');
+    const r = await w.run();
+    expect(w.st.reeled).toEqual([addr(1)]);
+    expect(r.casts).toMatchObject({ reeled: 1, fighting: 0, left: 0 });
+  });
+
+  it('on a chain whose reel window is shorter than a fight, a fish that is being fought is not a failure', async () => {
+    const w = world({ window: 256n });
+    w.cast(addr(1), 200, true, 'fish');
+    const r = await w.run();
+    expect(w.st.reeled).toEqual([]);
+    expect(r.casts).toMatchObject({ seen: 1, fighting: 1, left: 1 });
+    expect(r.failed).toBe(0);
+    expect(r.notes.join(' ')).not.toContain('run the drain again');
   });
 
   it('says that a drain cannot finish while casting is not paused', async () => {

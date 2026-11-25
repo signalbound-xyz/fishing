@@ -7,6 +7,7 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {BaseTest} from "./Base.t.sol";
 import {TournamentsBase} from "./Tournaments.t.sol";
+import {IReelJudge} from "../src/ReelJudge.sol";
 import {FishingGame, IBottlePool} from "../src/FishingGame.sol";
 import {Tournaments} from "../src/Tournaments.sol";
 import {PearlToken} from "../src/PearlToken.sol";
@@ -80,6 +81,12 @@ contract UpgradeFromReleaseTest is TournamentsBase {
     function _gameImplementation(PearlToken pearl_, FishNFT fish_, IBottlePool bottles_) internal override returns (address) {
         releasedGame = _released("FishingGame", ["pearl", "fishNft", "bottles"], [address(pearl_), address(fish_), address(bottles_)]);
         return releasedGame;
+    }
+
+    /// @dev The released game is the one before fights were checked: there is no judge to attach to it. After the
+    ///      upgrade none is attached either, until a test does it, as on a live network.
+    function _judged() internal pure override returns (bool) {
+        return false;
     }
 
     function _tournamentsImplementation(FishingGame game_, FishNFT fish_, IERC20 blend_) internal override returns (address) {
@@ -444,10 +451,100 @@ contract UpgradeFromReleaseTest is TournamentsBase {
         vm.setBlockhash(target, keccak256(abi.encode("a bite", uint256(3))));
         uint256 next = fish.nextId();
         vm.prank(erin);
-        game.reel();
+        game.reel("");
         assertEq(_castOf(erin).targetBlock, 0, "the cast is settled");
         if (fish.nextId() > next) assertEq(fish.ownerOf(next), erin);
         assertEq(game.playerOf(erin).casts, 1);
+    }
+
+    /// @dev The reel fight on top of the released state. The upgrade alone changes nothing: no judge is attached,
+    ///      and the cast erin made on the released code is a catch for any bite, for whoever settles it. The judge
+    ///      cannot be attached under that cast. Once it is, nobody's progress has moved, and from the next cast on
+    ///      a fish is minted for a landing recording only.
+    function test_reelFightsOnTopOfTheReleasedState() public {
+        uint64 target = _castOf(erin).targetBlock;
+        bool counts = _castOf(erin).counted;
+        _upgrade();
+        assertEq(lens.reelJudge(), address(0), "the upgrade attached a judge by itself");
+        assertFalse(_castOf(erin).fight, "a cast made before the upgrade asks for a fight");
+
+        if (counts) {
+            vm.prank(owner);
+            vm.expectRevert(FishingGame.WaterNotStill.selector);
+            game.setReelJudge(reelJudge);
+        }
+
+        // the old cast, by the old rule: a stranger settles it and the fish, if one bites, is erin's
+        vm.roll(target + 1);
+        uint256 next = fish.nextId();
+        for (uint256 i;; i++) {
+            vm.setBlockhash(target, keccak256(abi.encode("before the judge", i)));
+            uint256 snap = vm.snapshotState();
+            vm.prank(frank);
+            game.reelFor(erin);
+            if (fish.nextId() > next) break;
+            vm.revertToState(snap);
+        }
+        assertEq(fish.ownerOf(next), erin);
+
+        bytes32 gameBefore = _gameState();
+        bytes32 fishBefore = _fishState();
+        bytes32 cupBefore = _cupState();
+        vm.prank(owner);
+        game.setReelJudge(reelJudge);
+        assertEq(lens.reelJudge(), address(reelJudge));
+        assertEq(_gameState(), gameBefore, "attaching the judge moved a player's state");
+        assertEq(_fishState(), fishBefore, "attaching the judge moved a fish");
+        assertEq(_cupState(), cupBefore, "attaching the judge moved a tournament");
+
+        // a new cast: the fish gets away without a landing, and leaves nothing
+        vm.prank(erin);
+        game.cast(0);
+        assertTrue(_castOf(erin).fight);
+        target = _castOf(erin).targetBlock;
+        vm.roll(target + 1);
+        next = fish.nextId();
+        for (uint256 i;; i++) {
+            vm.setBlockhash(target, keccak256(abi.encode("after the judge", i)));
+            uint256 snap = vm.snapshotState();
+            _reelIn(erin);
+            bool bites = fish.nextId() > next;
+            vm.revertToState(snap);
+            if (bites) break;
+        }
+        vm.prank(frank);
+        vm.expectRevert(FishingGame.FishOn.selector);
+        game.reelFor(erin);
+        FishingGame.Player memory before = game.playerOf(erin);
+        vm.prank(erin);
+        game.reel("");
+        FishingGame.Player memory after_ = game.playerOf(erin);
+        assertEq(fish.nextId(), next, "a fish was minted for a fight nobody played");
+        assertEq(after_.xp, before.xp);
+        assertEq(after_.catches, before.catches);
+        assertEq(after_.dexCount, before.dexCount);
+        assertEq(_fishState(), fishBefore);
+
+        // and the same water, fought well, gives its fish
+        vm.prank(erin);
+        game.cast(0);
+        target = _castOf(erin).targetBlock;
+        vm.roll(target + 1);
+        for (uint256 i; fish.nextId() == next; i++) {
+            vm.setBlockhash(target, keccak256(abi.encode("landed", i)));
+            uint256 snap = vm.snapshotState();
+            _reelIn(erin);
+            if (fish.nextId() == next) vm.revertToState(snap);
+        }
+        assertEq(fish.ownerOf(next), erin);
+        assertEq(game.playerOf(erin).catches, before.catches + 1);
+
+        // the switch back, for an incident: off again from the next cast
+        vm.prank(owner);
+        game.setReelJudge(IReelJudge(address(0)));
+        vm.prank(erin);
+        game.cast(0);
+        assertFalse(_castOf(erin).fight);
     }
 
     /// @dev The game counts its casts in the water since release 004. A cast made on earlier code is not in the
@@ -678,7 +775,7 @@ contract UpgradeFromReleaseTest is TournamentsBase {
 
         // the ordinary catch of that cast is landed by the game as always
         vm.prank(bob);
-        game.reel();
+        game.reel("");
 
         bytes32[5] memory now_ = [_still(alice), _still(carol), _still(dave), _still(erin), _still(frank)];
         for (uint256 i; i < 5; i++) assertEq(now_[i], others[i], "another player changed with the cast");

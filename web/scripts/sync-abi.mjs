@@ -23,6 +23,7 @@ const CONTRACTS = {
   BottlePool: 'bottlePoolAbi',
   DailyRewards: 'dailyRewardsAbi',
   SeasonHunt: 'seasonHuntAbi',
+  ReelJudge: 'reelJudgeAbi',
 };
 
 mkdirSync(genDir, { recursive: true });

@@ -215,13 +215,24 @@ export function keeperChain(o: KeeperChainOptions): KeeperChain {
       return out;
     },
     async castOf(player) {
-      // read as words: a release up to 003 answers with six of them, later ones add `counted`
+      // read as words: a release up to 003 answers with six of them, 004 adds `counted`, 005 `fight`
       const { data } = await client.call({ to: o.game, data: (CAST_OF + pad(player).slice(2)) as Hex });
       if (!data || data.length < 2 + 64 * 6) throw new Error('castOf answered with nothing');
       const word = (i: number): bigint => BigInt('0x' + data.slice(2 + 64 * i, 2 + 64 * (i + 1)));
-      return { targetBlock: word(0), counted: data.length >= 2 + 64 * 7 && word(6) !== 0n };
+      return { targetBlock: word(0), counted: data.length >= 2 + 64 * 7 && word(6) !== 0n, fight: data.length >= 2 + 64 * 8 && word(7) !== 0n };
     },
-    reelFor: (player) => send({ ...game, functionName: 'reelFor', args: [player] }),
+    async reelFor(player) {
+      try {
+        await send({ ...game, functionName: 'reelFor', args: [player] });
+        return 'reeled';
+      } catch (e) {
+        // refused before anything was sent (the gas estimate reverts): the fish is its player's to fight. Not every
+        // node says why an estimate failed, so the game is asked once more with a plain call.
+        const why = revertName(e) ?? (await client.simulateContract({ ...game, functionName: 'reelFor', args: [player], account: o.account }).then(() => null, revertName));
+        if (why === 'FishOn') return 'fishOn';
+        throw e;
+      }
+    },
     async water() {
       if (!(await isCounting())) return null; // release 003 and earlier do not count their casts
       const [inWater, paused] = await Promise.all([client.readContract({ ...game, functionName: 'castsInWater' }), client.readContract({ ...game, functionName: 'castingPaused' })]);

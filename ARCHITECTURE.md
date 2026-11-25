@@ -3,6 +3,11 @@
 This note covers one question: how far player skill can count in a game whose valuable outcomes are decided by a
 contract, when the only client is a browser the player controls.
 
+Two answers are in the code. Up to release 004, which is what Fluent Testnet runs, skill changes time and nothing
+else. Release 005, in the source and not deployed, lets the fight decide whether the fish is landed at all, once
+its owner attaches a reel judge ("The reel fight" below). Both are described; where they differ the text says
+which.
+
 ## The lifecycle
 
 ```
@@ -12,6 +17,8 @@ cast(location)            transaction   spends energy, rod wear and a lure cast;
 bite · hook · fight       in the client the client works the outcome out and plays it
 reel()                    transaction   the contract computes the same outcome and applies it:
                                         mints the fish, XP, encyclopedia, records, weekly score
+                                        (release 005: reel(recording); with a judge attached the fish is
+                                        minted only if the recording of the fight lands it)
 ```
 
 Two transactions per catch, and none in the middle of the game. A cast with nothing on the hook needs no
@@ -19,25 +26,28 @@ settlement transaction at all: the next `cast()` settles it.
 
 ### What decides the result
 
-| | Local game | On the contracts |
-|---|---|---|
-| Does anything bite | client RNG | contract, from the block hash |
-| Species, weight | client RNG | contract, from the block hash |
-| Quality (D–S) | share of the fight spent in the green | contract; a better rod shifts the roll, a rarer fish lowers it |
-| Hooking too late | the fish is lost | the fish bites again |
-| Losing the fight | the fish is lost | another try, with an easier fight; after three the fish is hauled in |
-| Price, tournament score | from the above | from the above |
+| | Local game | On the contracts, up to release 004 | On the contracts, release 005 with a reel judge |
+|---|---|---|---|
+| Does anything bite | client RNG | contract, from the block hash | the same |
+| Species, weight | client RNG | contract, from the block hash | the same |
+| Quality (D–S) | share of the fight spent in the green | contract; a better rod shifts the roll, a rarer fish lowers it | the same: the contract's roll, not the fight |
+| Hooking too late | the fish is lost | the fish bites again | the fish bites again (a hook cannot be checked) |
+| Losing the fight | the fish is lost | another try, with an easier fight; after three the fish is hauled in | **the fish is lost**: one fight, replayed by the contract |
+| The fight | the integer machine, one try | a floating-point model in the browser | the integer machine (`FightVerifier`), one try |
+| Price, tournament score | from the above | from the above | from the above |
 
-Location, rod and lure matter in both modes. In the local game the hook and the fight decide whether the fish is
-landed and how good it is. On the contracts they decide only how soon the player gets to settle, and they produce
-the "your fight" line on the catch card, which is information for the player and worth nothing.
+Location, rod and lure matter in every column. In the local game the hook and the fight decide whether the fish is
+landed and how good it is. On the contracts up to release 004 they decide only how soon the player gets to settle,
+and they produce the "your fight" line on the catch card, which is information for the player and worth nothing.
+With a judge attached the fight decides whether the cast gives a fish; everything else about the fish is still the
+contract's roll.
 
-## Why skill does not change value on the contracts
+## Why skill did not change value on the contracts (up to release 004)
 
 The contract cannot see the fight, so skill could only reach it as a number the browser reports. Three ways to do
-that were considered.
+that were considered first; a fourth was built later ("The reel fight").
 
-**A. The contract decides everything (chosen).** Nothing reported by the client is used. Nothing can be forged.
+**A. The contract decides everything (chosen for releases up to 004).** Nothing reported by the client is used. Nothing can be forged.
 Skill cannot change value.
 
 **B. A backend validates the fight and signs the result.** The contract would check the signature. This is the
@@ -59,6 +69,66 @@ there is one, sets the hook window and the fight to the fish that is actually th
 A player who bypasses the client gains nothing but time: they can call `reel()` directly and get exactly the fish
 the contract would have given them anyway.
 
+## The reel fight (release 005, in the source; switched on by attaching a judge)
+
+**D. The contract replays the fight.** The tournaments already had a fight a contract can check: a deterministic
+machine in integers, driven by one bit per 50 ms tick ("is the player reeling?"), which the browser runs live and
+`FightVerifier` runs again on the recording. Release 005 uses the same machine for every fish:
+
+```
+cast(location)            as before; the cast remembers that a judge was attached (Cast.fight)
+… the block is produced   the outcome and the fight (seed, difficulty, green band) are fixed and public
+bite · hook               in the client; a missed hook is another bite, as before
+the fight, once           the client runs the machine and records the bits
+reel(recording)           the game works out the fish, asks the judge whether the recording lands it,
+                          and mints it or lets it go (Escaped). Either way the cast is closed
+```
+
+- **Where the rule lives.** `ReelJudge` (a plain contract, 1,404 bytes, no owner, no storage) says which fight a
+  cast gets: the seed is `keccak256(castSeed)`, the difficulty is the fish's rarity plus the water's tier (at
+  most 5), the green band comes from the rod's catch, as the page has always shown it. The game holds one
+  address, `reelJudge`, set by the owner over still water; zero means "any bite is a catch", the rule of every
+  earlier release. Tuning the fight is another judge, not an upgrade of the game. The game itself had 989 bytes
+  free; the fight took 577.
+- **One attempt, on the chain.** The cast is deleted by its first settlement, landed or lost. For 600 blocks
+  (`FIGHT_BLOCKS`, about ten minutes) a fish on the line is its player's alone: `reelFor` by anyone and the
+  auto-settlement of a new cast revert `FishOn`, so nobody can end the fight for the player, and the player cannot
+  drop a fish to cast again. After 600 blocks the fish is gone whatever recording arrives, and anyone may close the
+  cast. Nothing and bottles need no fight and are settled by anyone as before.
+- **What a lost fish costs.** Nothing is written for it: no NFT, no XP, no collection entry, no record, no weekly
+  score, no pity counter. The energy, the rod wear and the lure use were charged by `cast` and are not returned.
+- **Equipment.** The band is `25% + 0.75 points × the rod's catch`, between 15% and 37.5%, computed by the judge
+  from the tackle fixed at the cast. A better rod is a wider band in the contract's own replay.
+- **Every path was closed, not only `reel`.** `reelFor`, a new `cast`, the hunt's `castFor`, late settlement,
+  expiry, casts made before a judge was attached, a judge that does not answer: the table is in
+  `contracts/UPGRADES.md`, "The reel fight", with the test that holds each row.
+
+### What the replay proves, and what it does not
+
+It proves that the transaction that settled the cast carried a recording that lands that fish, sent by the
+player's address, in time. That is all.
+
+- **A program can land every fish.** The fight's seed is public once the cast's block exists, and the machine is
+  deterministic: computing a landing recording is a few milliseconds of search (`contracts/test/FightBot.sol`
+  does it in Solidity for the tests; `botInputs` in `web/src/game/fight.ts` in TypeScript). The replay does not
+  show that a person played. Nothing in this design can.
+- **"One attempt" binds the chain, not the browser.** The contract sees one recording per cast. The page plays
+  the fight once and keeps a note that it did (`web/src/play/fightLog.ts`, in `localStorage`); a player who
+  clears that note, opens another browser or runs a modified page can fight the same fish again off the chain and
+  send the best recording, within the 600 blocks. A lost fight is final only once it is sent, or once the time is
+  up.
+- **So the rule is real for honest players on the official page and for nobody else.** With a judge attached a
+  script earns what everybody earned before, and people earn less by how well they fight
+  (`web/REEL_BALANCE.md`). This is a cost of the rule, stated here so that nobody reads "verified on the chain"
+  as "proof of a human". CAPTCHAs, attestation and a sanctioned fishing agent are a separate decision and are
+  not part of this work.
+- **The hook is not checked.** How fast it was set exists only in the browser. A missed hook is another bite, and
+  the head start a clean hook gave in the old flow is gone under the judge.
+- **Selective settlement is unchanged.** A player has always been able to see the outcome before settling and
+  let a poor cast lie. Now they also see the fight before playing it. Neither refunds the cast.
+- **The owner's switch.** `setReelJudge` is the owner's, over still water only: it turns the rule on and off and
+  could attach a judge that lands everything or nothing. A cast already made keeps the rule it was made under.
+
 ### Keeping the prediction honest
 
 The prediction decides nothing, but a wrong one would show the player a fish that is not there. So:
@@ -70,7 +140,10 @@ The prediction decides nothing, but a wrong one would show the player a fish tha
 - At settlement the client compares what it predicted with what the contract emitted and logs any difference.
   The contract's answer is the one shown.
 - If the prediction cannot be made (RPC trouble), the client falls back to settling first and showing the fight
-  as a replay.
+  as a replay. Not for a cast that needs a fight: there the page waits for the prediction and never settles a fish
+  without its recording, because an empty recording would let the fish go.
+- The fight is pinned the same way: every caught vector carries the judge's seed, difficulty and band and a
+  recording that lands it, and the client's tests check its own numbers against them and replay each recording.
 
 ## Failure handling
 
@@ -79,12 +152,18 @@ The prediction decides nothing, but a wrong one would show the player a fish tha
   is not replayed.
 - **Reload or a second tab mid-cast:** the pending cast is read from the contract and the bite is staged again.
 - **Double settlement:** the contract deletes the cast when it settles; a second `reel()` reverts `NoActiveCast`.
+- **Under the reel judge:** a rejected or failed settlement keeps the recording (won or lost) and offers it again
+  for as long as the 600 blocks last. A reload in the middle of a fight comes back to a fight that was started
+  and not finished: the page offers to reel the line in, which sends an empty recording and closes the cast
+  without a fish. A reload before the fight's countdown began loses nothing. When the 600 blocks run out the page says the
+  fish got away and clears the cast.
 - **Expiry:** a cast can be landed for as long as the chain has the hash of its randomness block. From release 004
   that is 8,191 blocks on Fluent, a little over two hours (the chain's block-hash history, EIP-2935); on release
   003 and on a chain without the history it is 256 blocks, about four minutes. The client asks the chain which it
   is and settles with blocks to spare; past the window the cast is void, which is the contract's rule, not the
   client's. The operator's keeper reels in casts that are about to expire ([web/KEEPER.md](web/KEEPER.md)), so a
-  closed tab does not lose the fish once the keeper runs.
+  closed tab does not lose the fish once the keeper runs. Under the reel judge it does: only the player can land
+  a fish, and only for 600 blocks.
 
 ## Randomness
 
@@ -173,12 +252,19 @@ refund and no other seed.
 3. **A session key or sponsored, review-free calls** for `cast`/`reel`, if the wallet supports it: the remaining
    friction is the confirmation window, not the gas.
 4. **Verified skill (option B)**: a signer address in the contract and `reel(result, signature)`, plus the backend
-   described above.
+   described above. Release 005 took another road to the same end (option D, "The reel fight"): no server, and
+   the same blind spot for bots.
 5. **VRF or beacon randomness**, as above.
 
 ## Limits
 
-- In free play on the contracts, skill changes time and nothing else. In tournaments the fight is replayed by the
-  contract and decides the score; see above for what that does not prove.
-- The model players in `web/BALANCE.md` are models. The landing rates are estimates to check by hand.
-- A bot can play the mini-game. On the contracts that buys nothing; in the local game nothing is at stake.
+- In free play on the contracts up to release 004, skill changes time and nothing else. In tournaments, and in
+  free play on release 005 with a judge attached, the fight is replayed by the contract and decides the score or
+  the fish; see "What the replay proves, and what it does not".
+- The model players in `web/BALANCE.md` and `web/REEL_BALANCE.md` are models. The landing rates are estimates to
+  check by hand.
+- A bot can play the mini-game. Up to release 004 that buys nothing. Under the judge it buys every fish a person
+  would have lost.
+- The strict flow of the page has been driven in a browser in local mode, and against the contracts from Node on
+  a local chain (`web/live/reel.live.ts`), not in a browser against a game with a judge: sign-in is Fluent
+  Connect, which has no wallet on a local chain.

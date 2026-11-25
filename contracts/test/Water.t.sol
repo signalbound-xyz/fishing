@@ -8,7 +8,16 @@ import {GameSetup} from "../script/GameSetup.sol";
 import {Economy} from "../script/Economy.s.sol";
 
 /// @dev What both suites below need: the outcome of a cast, looked at without landing it.
+///
+///      Both are about casts as such: how long the chain remembers one, and what may change while one is in the
+///      water. They are run with no judge attached, so that any cast can be closed by anyone at any time, as a
+///      cast with nothing to fight for always can (no bite, a bottle). What the reel fight adds to this (a fish is
+///      the player's alone for FIGHT_BLOCKS, and the water is still again after them) is in test/ReelFight.t.sol.
 abstract contract WaterBase is BaseTest {
+    function _judged() internal pure override returns (bool) {
+        return false;
+    }
+
     function _cast(address who) internal returns (uint64 target) {
         vm.prank(who);
         game.cast(0);
@@ -49,22 +58,9 @@ abstract contract WaterBase is BaseTest {
 ///         with EIP-2935 keeps the last 8,191 in a system contract, and the game asks it once the EVM's own
 ///         answer is gone. On Fluent that is a few minutes turned into more than two hours.
 contract HistoryWindowTest is WaterBase {
-    address internal constant HISTORY = 0x0000F90827F1C53a10cb7A02335B175320002935;
-    uint256 internal constant WINDOW = 8_191;
-    /// @dev The contract of EIP-2935 as the EIP gives it. Fluent serves the same interface from a system contract
-    ///      of its own (checked on the live network, web/live): the hash for one of the last 8,191 blocks, a
-    ///      revert for any other.
-    bytes internal constant HISTORY_CODE =
-        hex"3373fffffffffffffffffffffffffffffffffffffffe14604657602036036042575f35600143038111604257611fff81430311604257611fff9006545f5260205ff35b5f5ffd5b5f35611fff60014303065500";
-
     function setUp() public override {
         super.setUp();
         vm.etch(HISTORY, HISTORY_CODE);
-    }
-
-    /// @dev What the chain does at the start of every block: the parent's hash goes into the ring.
-    function _remember(uint256 blockNo, bytes32 hash) internal {
-        vm.store(HISTORY, bytes32(blockNo % WINDOW), hash);
     }
 
     function _history(uint256 blockNo) internal view returns (bool ok, bytes32 hash) {
@@ -76,14 +72,14 @@ contract HistoryWindowTest is WaterBase {
     function test_theHistoryContractServesTheLast8191BlocksAndNoOther() public {
         vm.roll(100_000);
         _remember(99_999, keccak256("parent"));
-        _remember(100_000 - WINDOW, keccak256("oldest"));
+        _remember(100_000 - HISTORY_WINDOW, keccak256("oldest"));
         (bool ok, bytes32 hash) = _history(99_999);
         assertTrue(ok);
         assertEq(hash, keccak256("parent"));
-        (ok, hash) = _history(100_000 - WINDOW);
+        (ok, hash) = _history(100_000 - HISTORY_WINDOW);
         assertTrue(ok);
         assertEq(hash, keccak256("oldest"));
-        (ok,) = _history(100_000 - WINDOW - 1);
+        (ok,) = _history(100_000 - HISTORY_WINDOW - 1);
         assertFalse(ok, "older than the window");
         (ok,) = _history(100_000);
         assertFalse(ok, "the current block");
@@ -119,11 +115,11 @@ contract HistoryWindowTest is WaterBase {
         bytes32 entropy = _aBite(alice, target);
         _remember(target, entropy);
 
-        vm.roll(uint256(target) + WINDOW);
+        vm.roll(uint256(target) + HISTORY_WINDOW);
         (, bool landed) = _peek(alice);
         assertTrue(landed, "8,191 blocks after the randomness block the cast still lands");
 
-        vm.roll(uint256(target) + WINDOW + 1);
+        vm.roll(uint256(target) + HISTORY_WINDOW + 1);
         vm.expectEmit(true, false, false, false);
         emit FishingGame.CastExpired(alice);
         game.reelFor(alice);
@@ -203,7 +199,7 @@ contract StillWaterTest is WaterBase {
 
         vm.roll(target + 1);
         vm.prank(alice);
-        game.reel();
+        game.reel("");
         assertEq(game.castsInWater(), 1);
         game.reelFor(bob);
         assertEq(game.castsInWater(), 0);
@@ -317,7 +313,7 @@ contract StillWaterTest is WaterBase {
 
         // everything else goes on
         vm.startPrank(alice);
-        game.reel();
+        game.reel("");
         game.buyLure(0);
         uint256[] memory ids = new uint256[](1);
         ids[0] = kept;

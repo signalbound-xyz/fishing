@@ -5,6 +5,12 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {PearlToken} from "./PearlToken.sol";
 import {FishNFT} from "./FishNFT.sol";
 import {CatchMath} from "./CatchMath.sol";
+import {IReelJudge} from "./ReelJudge.sol";
+
+/// @dev Blocks after a cast's randomness block in which its fish can be reeled in. A fight lasts a minute at most;
+///      the rest is for the bite, a slow connection and a page that was reloaded. Ten minutes of Fluent's
+///      one-second blocks. GameLens gives it to clients (`fightBlocks`).
+uint256 constant FIGHT_BLOCKS = 600;
 
 /// @dev The BLEND bottles (src/BottlePool.sol): holds the prize money and pays it.
 interface IBottlePool {
@@ -15,11 +21,13 @@ interface IBottlePool {
 /// @title Onchain Fishing: the whole game.
 /// @notice Flow: `cast` (spend energy, wear the rod and the lure, commit to a future block) → wait `revealDelay`
 ///         blocks → `reel` (the outcome is derived from that block's hash). The block did not exist at cast time,
-///         so a player cannot re-roll by reverting; skipping the reel only forfeits the catch. Anyone may `reelFor`
-///         a player, the catch always goes to that player.
+///         so a player cannot re-roll by reverting; skipping the reel only forfeits the catch.
 ///
 ///         Everything that decides value is rolled here: whether anything bites, the species, the weight and the
-///         quality grade. A client may animate the fight any way it likes; it cannot influence the result.
+///         quality grade. A fish that bites has to be reeled in: `reel` takes the player's recording of the fight,
+///         the judge (src/ReelJudge.sol) replays it, and a fish that was not landed is not minted. The fight is
+///         the player's for `FIGHT_BLOCKS` after the cast's block; after that the fish is gone, and anyone may
+///         `reelFor` the player to close the cast.
 /// @dev Randomness = blockhash of a future block. On an L2 the sequencer controls blockhashes, so anything with
 ///      real value at stake should swap in a VRF or a randomness beacon. Not audited.
 contract FishingGame is Ownable {
@@ -103,6 +111,7 @@ contract FishingGame is Ownable {
         uint8 lure; // 0 = none, else id + 1
         uint8 special; // active special bonus fixed at cast time: 0 = none, else id + 1
         bool counted; // in `castsInWater`: false only for a cast made before that counter existed
+        bool fight; // its fish has to be reeled in: false for a cast made while no judge was attached
     }
 
     struct Config {
@@ -211,6 +220,11 @@ contract FishingGame is Ownable {
     ///         fish, but the game does not buy it: selling one would mint PEARL for a catch no cast paid for.
     mapping(uint256 => bool) internal isTrophy;
 
+    /// @notice Decides whether a fish on the line was landed (src/ReelJudge.sol). Zero: nobody does, and a cast
+    ///         made meanwhile gives its fish as it did before fights were checked. Read through GameLens
+    ///         (`reelJudge`): a getter here would cost room this contract does not have.
+    IReelJudge internal reelJudge;
+
     // ------------------------------------------------------------------ errors & events
 
     error UnknownRod();
@@ -237,6 +251,7 @@ contract FishingGame is Ownable {
     error CastingPaused();
     error WaterNotStill();
     error TrophyNotForSale();
+    error FishOn();
 
     event Casted(address indexed player, uint8 locationId, uint8 rod, uint8 lure, uint64 targetBlock);
     event Caught(
@@ -250,6 +265,7 @@ contract FishingGame is Ownable {
         bool special
     );
     event Missed(address indexed player, uint8 locationId);
+    event Escaped(address indexed player, uint8 locationId, uint16 speciesId);
     event CastExpired(address indexed player);
     event BottleFound(address indexed player, uint256 amount);
     event LocationUnlocked(address indexed player, uint8 locationId);
@@ -345,6 +361,13 @@ contract FishingGame is Ownable {
     ///         reeled in as always, energy regenerates, fish are sold.
     function setCastingPaused(bool paused) external onlyOwner {
         castingPaused = paused;
+    }
+
+    /// @notice Attaches the judge of the reel fight, or takes it away (zero). A cast is settled by the rule it was
+    ///         made under, so this too waits for still water.
+    function setReelJudge(IReelJudge judge) external onlyOwner {
+        _stillWater();
+        reelJudge = judge;
     }
 
     /// @dev What decides a catch changes only between casts, never under one. Adding a rod, a lure, a location or
@@ -628,7 +651,8 @@ contract FishingGame is Ownable {
         if (castingPaused) revert CastingPaused();
         Cast storage active = casts[player];
         if (active.targetBlock != 0) {
-            // Convenience: a finished cast is resolved automatically before the new one.
+            // Convenience: a finished cast is resolved automatically before the new one. Not one with a fish
+            // that can still be reeled in: that takes `reel`.
             if (block.number <= active.targetBlock) revert CastInProgress();
             _reel(player);
         }
@@ -668,7 +692,7 @@ contract FishingGame is Ownable {
         if (special != 0 && fishNft.heldOf(player, _specials[special - 1].speciesId) == 0) special = 0;
 
         uint64 target = uint64(block.number) + config.revealDelay;
-        casts[player] = Cast(target, p.casts, locationId, rod, lure, special, true);
+        casts[player] = Cast(target, p.casts, locationId, rod, lure, special, true, address(reelJudge) != address(0));
         castsInWater += 1;
         p.casts += 1;
         totalCasts += 1;
@@ -699,15 +723,24 @@ contract FishingGame is Ownable {
         if (msg.sender != seasonHunt) revert OwnableUnauthorizedAccount(msg.sender);
     }
 
-    function reel() external {
+    /// @notice Settles the sender's cast. `inputs` is the recording of the fight with the fish on the line: one bit
+    ///         per 50 ms tick, 1 = reeling (src/FightVerifier.sol). A recording that lands the fish mints it; any
+    ///         other, an empty one included, closes the cast and the fish is gone. One call, one answer: there
+    ///         is no second try at the same fish. Nothing to fight (no bite, a bottle) is settled as it is.
+    function reel(bytes calldata) external {
         _reel(msg.sender);
     }
 
-    /// @notice Anyone can finish someone else's cast; the catch always goes to that player.
+    /// @notice Anyone can close someone else's cast. What needs no fight goes to that player as always. A fish on
+    ///         the line is the player's alone to reel in for `FIGHT_BLOCKS`; until then this reverts, after
+    ///         that the fish is gone.
     function reelFor(address player) external {
         _reel(player);
     }
 
+    /// @dev One body for the three ways in (`reel`, `reelFor`, a new cast). Which of them it is, and the recording
+    ///      of a `reel`, are read from the call itself where a fish needs them: a parameter for it would make
+    ///      the compiler keep a copy of this function per caller, and the contract has no room for that.
     function _reel(address player) internal {
         Cast memory c = casts[player];
         if (c.targetBlock == 0) revert NoActiveCast();
@@ -744,27 +777,69 @@ contract FishingGame is Ownable {
             }
         }
 
+        // which fish it is: nothing is written until it is landed, so a fish that gets away leaves no trace
         Location storage l = _locations[c.locationId];
-        uint16 speciesId;
+        uint256 sid = l.special;
         bool isSpecial;
-        if (l.special != 0) {
-            uint256 sid = l.special - 1;
-            Special storage sp = _specials[sid];
-            bool found = (p.specialsFound >> sid) & 1 == 1;
-            uint16 dry = dryCatches[player][sid];
-            if ((!found && uint256(dry) + 1 >= sp.pity) || (seed >> 40) % 1_000_000 < sp.chancePpm) {
-                isSpecial = true;
-                speciesId = sp.speciesId;
-                dryCatches[player][sid] = 0;
-                if (!found) p.specialsFound |= uint8(1 << sid);
-                if (p.activeSpecial == 0) p.activeSpecial = uint8(sid + 1);
-            } else if (dry < type(uint16).max) {
-                dryCatches[player][sid] = dry + 1;
-            }
+        if (sid != 0) {
+            sid -= 1;
+            isSpecial = ((p.specialsFound >> sid) & 1 == 0 && uint256(dryCatches[player][sid]) + 1 >= _specials[sid].pity)
+                || (seed >> 40) % 1_000_000 < _specials[sid].chancePpm;
         }
-        if (!isSpecial) speciesId = _pickSpecies(l, rarityBonus, hiddenMult, seed >> 64);
+        uint16 speciesId = isSpecial ? _specials[sid].speciesId : _pickSpecies(l, rarityBonus, hiddenMult, seed >> 64);
 
+        if (c.fight && _escaped(player, c, seed, speciesId, rodCatch)) return;
+
+        if (isSpecial) {
+            dryCatches[player][sid] = 0;
+            p.specialsFound |= uint8(1 << sid);
+            if (p.activeSpecial == 0) p.activeSpecial = uint8(sid + 1);
+        } else if (l.special != 0) {
+            uint16 dry = dryCatches[player][sid];
+            if (dry < type(uint16).max) dryCatches[player][sid] = dry + 1;
+        }
         _land(player, p, c.locationId, speciesId, isSpecial, weightBonus, rodCatch, seed);
+    }
+
+    /// @dev Whether the fish on the line of cast `c` got away. The fight is the player's, and only while there is
+    ///      time for one: nobody else can end it early, and once the time is up no recording brings the fish back.
+    function _escaped(address player, Cast memory c, uint256 seed, uint256 speciesId, int256 rodCatch)
+        internal
+        returns (bool lost)
+    {
+        lost = block.number > uint256(c.targetBlock) + FIGHT_BLOCKS;
+        if (!lost) {
+            // only the player's own `reel` fights the fish
+            if (msg.sig != this.reel.selector) revert FishOn();
+            lost = !_landed(seed, speciesId, c.locationId, rodCatch);
+        }
+        if (lost) emit Escaped(player, c.locationId, uint16(speciesId));
+    }
+
+    /// @dev `reelJudge.landed(seed, speciesId, locationId, rodCatch, inputs)`, with `inputs` being the one argument
+    ///      of the `reel` call that is running: the recording is copied from the call's data straight into the
+    ///      judge's, which costs a fraction of the code that decoding and encoding it again would. A recording
+    ///      that is not well-formed fails in the judge's own decoder, and so does this call: nothing is settled.
+    ///      An answer that is not one word is no answer (an address without code would give none).
+    function _landed(uint256 seed, uint256 speciesId, uint256 locationId, int256 rodCatch) internal view returns (bool ok) {
+        address judge = address(reelJudge);
+        bytes4 selector = IReelJudge.landed.selector;
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, selector)
+            mstore(add(m, 4), seed)
+            mstore(add(m, 36), speciesId)
+            mstore(add(m, 68), locationId)
+            mstore(add(m, 100), rodCatch)
+            mstore(add(m, 132), 160) // where the recording starts among the arguments
+            // reel(bytes): [selector][offset of the bytes][… length, bytes]; everything from the length on
+            let from := add(4, calldataload(4))
+            let n := sub(calldatasize(), from)
+            calldatacopy(add(m, 164), from, n)
+            if iszero(staticcall(gas(), judge, m, add(164, n), 0, 32)) { revert(0, 0) }
+            if iszero(eq(returndatasize(), 32)) { revert(0, 0) }
+            ok := mload(0)
+        }
     }
 
     /// @dev The hash of a past block, or zero when the chain no longer has it. The EVM itself serves the last 256

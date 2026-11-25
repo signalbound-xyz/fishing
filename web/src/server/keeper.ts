@@ -86,10 +86,15 @@ export interface HuntChain {
   settle(a: SeasonAttempt, proof: Hex): Promise<void>;
 }
 
-/** A cast in the water. `targetBlock` 0: there is none. `counted`: it is in the game's `castsInWater`. */
+/**
+ * A cast in the water. `targetBlock` 0: there is none. `counted`: it is in the game's `castsInWater`. `fight`: a
+ * fish it hooked has to be fought (release 005 with a reel judge attached), so for a while only its player can reel
+ * it in.
+ */
 export interface WaterCast {
   targetBlock: bigint;
   counted: boolean;
+  fight: boolean;
 }
 
 export interface KeeperChain {
@@ -103,8 +108,11 @@ export interface KeeperChain {
   /** `Casted` events in a range of blocks, both ends included. */
   casted(from: bigint, to: bigint): Promise<{ player: Address; targetBlock: bigint }[]>;
   castOf(player: Address): Promise<WaterCast>;
-  /** Sends `reelFor` and waits for it. Throws when it was not mined successfully. */
-  reelFor(player: Address): Promise<void>;
+  /**
+   * Sends `reelFor` and waits for it. Throws when it was not mined successfully. 'fishOn': the game refuses it
+   * (`FishOn`) because a fish is on the line and the fight is its player's; nothing was sent.
+   */
+  reelFor(player: Address): Promise<'reeled' | 'fishOn'>;
   /** The game's own count, or null on a release that does not keep one. */
   water(): Promise<{ paused: boolean; inWater: number } | null>;
   /** The account that pays for the transactions, or null when there is none (a dry run). */
@@ -163,6 +171,8 @@ export interface KeeperReport {
     reeled: number;
     /** Reeled in with their randomness gone (drain only): the cast leaves the water, there is no fish. */
     expired: number;
+    /** Fish on their players' lines: nobody else can reel one in until its time is up (they are in `left` too). */
+    fighting: number;
     /** Still in the water after this run, of those it looked at. */
     left: number;
     /** The window on this chain, blocks. */
@@ -198,6 +208,8 @@ const SLACK = 64n;
 /** Under this balance the report says so (0.002 ETH: a few hundred transactions on Fluent). */
 const LOW_BALANCE_WEI = 2_000_000_000_000_000n;
 const MAX_MISSES = 50_000;
+/** FishingGame.FIGHT_BLOCKS: how long a hooked fish is its player's alone. Only used to say so. */
+const FIGHT_BLOCKS = 600;
 /** The clock is spoken of once its lag is this fraction of the beacon's margin: a half. */
 const CLOCK_WARN_PARTS = 2;
 
@@ -222,7 +234,7 @@ export async function runKeeper(k: Keeper, opts: RunOptions = {}): Promise<Keepe
     dryRun: !!opts.dryRun,
     drain: !!opts.drain,
     hunt: { seasons: 0, attempts: 0, waiting: 0, hits: 0, settled: 0, beaten: 0, late: 0, mismatches: 0 },
-    casts: { seen: 0, reeled: 0, expired: 0, left: 0, window: 0 },
+    casts: { seen: 0, reeled: 0, expired: 0, fighting: 0, left: 0, window: 0 },
     failed: 0,
     skipped: 0,
     water: null,
@@ -243,7 +255,13 @@ export async function runKeeper(k: Keeper, opts: RunOptions = {}): Promise<Keepe
   await reelCasts(k, head, opts, report, go);
 
   report.water = await k.chain.water();
-  if (opts.drain && report.water && report.water.inWater !== 0 && !opts.dryRun) {
+  if (report.casts.fighting !== 0) {
+    report.notes.push(
+      `${report.casts.fighting} fish on the line: only its player can reel one in for ${FIGHT_BLOCKS} blocks after the cast, then anyone clears it (and the fish is gone)` +
+        (opts.drain ? ': run the drain again when that time is up' : ''),
+    );
+  }
+  if (opts.drain && report.water && report.water.inWater !== 0 && !opts.dryRun && report.water.inWater !== report.casts.fighting) {
     report.notes.push(
       report.water.paused
         ? `${report.water.inWater} cast(s) are still in the water: run the drain again (a cast can be reeled in two blocks after it was made), or with --from <block> if some are older than the reel window`
@@ -425,8 +443,11 @@ async function reelCasts(k: Keeper, head: Head, opts: RunOptions, report: Keeper
       continue;
     }
     try {
-      await k.chain.reelFor(l.player);
-      if (expired) report.casts.expired++;
+      // a cast that has to be fought may still hold a miss or a bottle, which anyone lands: the game says which
+      if ((await k.chain.reelFor(l.player)) === 'fishOn') {
+        report.casts.fighting++;
+        report.casts.left++;
+      } else if (expired) report.casts.expired++;
       else report.casts.reeled++;
     } catch (e) {
       // the player may have reeled in at the same moment: only a cast still in the water is a failure

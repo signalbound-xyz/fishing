@@ -14,6 +14,7 @@ import { buyLocation, buyLure, buyRod, claimAchievement, equipLure, equipRod, ho
 import { LOCATIONS, QUALITIES, QUALITY_MULT, SPECIALS, SPECIES, TUNING, XP_BY_RARITY, special } from '../src/game/content';
 import { levelOf, xpForLevel } from '../src/game/economy';
 import { totals, type Totals } from '../src/game/equipment';
+import { greenOf } from '../src/game/chainOutcome';
 import { CALM, MAX_TICKS, PULL, TICK_MS, U, WARN, basePoints, fightParams, fightStart, fightTick, pointsFor } from '../src/game/fight';
 import { pickSpecies, rollWeight, speciesOdds } from '../src/game/generate';
 import { CLEAN_HOOK_HEAD_START, CLEAN_HOOK_SHARE, difficultyOf, hookWindow, reelParams, simulateFight, type Difficulty, type ReelParams, type Skill } from '../src/game/minigame';
@@ -160,6 +161,7 @@ const fightCache = new Map<string, FightStats>();
 export function setFightsPerCell(n: number): void {
   fightsPerCell = n;
   fightCache.clear();
+  judgeCache.clear();
   modelCache.clear();
 }
 
@@ -193,6 +195,40 @@ export function fightStats(player: PlayerName, eff: number, zone: number, ease =
   return out;
 }
 
+const judgeCache = new Map<string, FightStats>();
+/**
+ * How a model player does in the one fight the reel judge checks (contracts/src/ReelJudge.sol): FIGHTS_PER_CELL
+ * fights on the integer machine the contract replays (game/fight.ts), at a difficulty of 0–5 and a green band in
+ * the machine's units. The grades are left empty: on the contracts the grade is the contract's roll, not the fight.
+ */
+export function judgeFightStats(player: PlayerName, d: number, green: number): FightStats {
+  const key = `${player}:${d}:${green}`;
+  const hit = judgeCache.get(key);
+  if (hit) return hit;
+  const rng = mulberry32(hash(`judge:${key}`));
+  let land = 0;
+  let snapped = 0;
+  let seconds = 0;
+  let secondsLost = 0;
+  for (let i = 0; i < fightsPerCell; i++) {
+    // the machine reads the top 32 bits of the seed
+    const seed = BigInt(Math.floor(rng() * 4294967296)) << 224n;
+    const f = cupFight(seed, d, green, PLAYERS[player].fight, rng);
+    const secs = (f.ticks * TICK_MS) / 1000;
+    if (f.landed) {
+      land++;
+      seconds += secs;
+    } else {
+      if (f.snapped) snapped++;
+      secondsLost += secs;
+    }
+  }
+  const lost = fightsPerCell - land;
+  const out = { land: land / fightsPerCell, snapped: snapped / fightsPerCell, slack: (lost - snapped) / fightsPerCell, q: { D: 0, C: 0, B: 0, A: 0, S: 0 }, seconds: seconds / Math.max(1, land), secondsLost: secondsLost / Math.max(1, lost) };
+  judgeCache.set(key, out);
+  return out;
+}
+
 /** The contract's quality roll (CatchMath.rollQuality with the deployed config): share of each grade. */
 export function contractQuality(rodCatch: number, rarity: number): Record<Quality, number> {
   const shift = rodCatch * 150 - rarity * 300;
@@ -218,11 +254,15 @@ function pickQuality(q: Record<Quality, number>, rng: () => number): Quality {
 
 /**
  * What the hook and the fight decide.
- * - 'chain': production. The contract rolls the catch and its quality; a missed hook or a lost fight is another
- *   try (three at most, each easier), so skill costs time, not fish.
+ * - 'chain': the contracts up to release 004. The contract rolls the catch and its quality; a missed hook or a
+ *   lost fight is another try (three at most, each easier), so skill costs time, not fish.
+ * - 'strict': the contracts with the reel judge attached (release 005). The catch and its quality are still the
+ *   contract's roll, and a missed hook is still another bite, but the fish is fought once, in the fight the
+ *   contract replays (game/fight.ts): lose it and the fish is gone, with the energy, the rod wear and the lure use
+ *   of the cast spent. The reel configurations do not apply: the judge has the game's own six levels and no other.
  * - 'local': the browser game. A missed hook or a lost fight loses the fish, and quality is how well it was fought.
  */
-export type Rules = 'chain' | 'local';
+export type Rules = 'chain' | 'strict' | 'local';
 
 export interface World {
   name: string;
@@ -254,6 +294,9 @@ export const TIMING = {
   /** Sending cast() and reel(): signing plus two blocks. Not measured. */
   txCast: 4,
   txReel: 4,
+  /** The one-try fight counts down before it starts (pond.ts READY_MS), and shows the fish getting away (LOSS_MS). */
+  fightReady: 2.4,
+  fightLoss: 1.1,
 };
 
 // ------------------------------------------------------------------ one cast, as expected values and as a sample
@@ -365,6 +408,16 @@ export function castModel(rules: Rules, player: PlayerName, reel: ReelName, worl
       hookLost += l.p * hk.miss;
       fightLost += l.p * (1 - hk.miss - land);
       nTries = 1;
+    } else if (rules === 'strict') {
+      // the bite comes back until the hook is set (the fourth has no window); then the one fight the judge checks
+      const f = judgeFightStats(player, Math.min(5, difficultyOf(l.rarity, loc.tier)), greenOf(t.rod.catch));
+      const m = hk.miss;
+      const misses = m + m * m + m * m * m;
+      land = f.land;
+      q = contractQuality(t.rod.catch, l.rarity);
+      nTries = 1 + misses;
+      secs = misses * (hk.window + TIMING.retryWait) + (1 - m ** 3) * hk.reaction + m ** 3 * pl.hook.median + TIMING.fightReady + land * f.seconds + (1 - land) * (f.secondsLost + TIMING.fightLoss);
+      fightLost += l.p * (1 - land);
     } else {
       // up to three tries; each lost fight or missed hook is one, and the fish is hauled in after the third
       land = 1;
@@ -399,8 +452,10 @@ export function castModel(rules: Rules, player: PlayerName, reel: ReelName, worl
     for (const k of QUALITIES) quality[k] += l.p * land * q[k];
   }
   for (const k of QUALITIES) quality[k] /= Math.max(1e-9, landed);
-  const tx = rules === 'chain' ? TIMING.txCast : 0;
-  const seconds = tx + TIMING.castAnimation + TIMING.biteWait(loc.tier) * quick + (1 - bite) * TIMING.noBiteMessage + bite * (fightSeconds + landed * ((rules === 'chain' ? TIMING.txReel : 0) + pl.between) + (1 - landed) * TIMING.noBiteMessage);
+  const tx = rules === 'local' ? 0 : TIMING.txCast;
+  // a fish lost under the reel judge is still a transaction: the cast is closed by sending the lost fight
+  const seconds =
+    tx + TIMING.castAnimation + TIMING.biteWait(loc.tier) * quick + (1 - bite) * TIMING.noBiteMessage + bite * (fightSeconds + landed * ((rules === 'local' ? 0 : TIMING.txReel) + pl.between) + (1 - landed) * ((rules === 'strict' ? TIMING.txReel : 0) + TIMING.noBiteMessage));
   const out: CastModel = {
     totals: t,
     bite,
@@ -539,6 +594,9 @@ export interface CareerResult {
   hookMissed: number;
   fightsLost: number;
   bites: number;
+  /** Fish that bit, and fish that got away (a missed hook or a lost fight), by rarity (Common … Mythic). */
+  hookedByRarity: number[];
+  lostByRarity: number[];
   /** PEARL from selling fish, from achievements; and spent on rods, lures, repairs, refills, locations. */
   earned: number;
   rewards: number;
@@ -594,7 +652,7 @@ export function career(sc: Scenario, seed: number): CareerResult {
   let s: Save = sc.start === 'veteran' ? veteranSave(now) : { ...freshSave(now), blendWins: 99 };
   let energy = world.maxEnergy;
   let energyClock = now;
-  const res: CareerResult = { marks: {}, energyAt: {}, sittings: [], casts: 0, energy: 0, landed: 0, hookMissed: 0, fightsLost: 0, bites: 0, earned: 0, rewards: 0, spent: { rods: 0, lures: 0, repairs: 0, refills: 0, locations: 0 }, refills: 0, earnedByDay: [], weeks: [], snapshots: {}, save: s };
+  const res: CareerResult = { marks: {}, energyAt: {}, sittings: [], casts: 0, energy: 0, landed: 0, hookMissed: 0, fightsLost: 0, bites: 0, hookedByRarity: [0, 0, 0, 0, 0, 0], lostByRarity: [0, 0, 0, 0, 0, 0], earned: 0, rewards: 0, spent: { rods: 0, lures: 0, repairs: 0, refills: 0, locations: 0 }, refills: 0, earnedByDay: [], weeks: [], snapshots: {}, save: s };
   let day = 1;
   const mark = (k: string): void => {
     res.marks[k] ??= day;
@@ -749,7 +807,7 @@ export function career(sc: Scenario, seed: number): CareerResult {
       res.energy += cost;
       const loc = LOCATIONS[p.locId];
       const quick = 1 - Math.min(0.4, Math.max(0, c.ticket.totals.lure.catch) * 0.03);
-      let secs = (sc.rules === 'chain' ? TIMING.txCast : 0) + TIMING.castAnimation + TIMING.biteWait(loc.tier) * quick;
+      let secs = (sc.rules === 'local' ? 0 : TIMING.txCast) + TIMING.castAnimation + TIMING.biteWait(loc.tier) * quick;
       if (!rollBite(c.ticket, rng)) secs += TIMING.noBiteMessage;
       else {
         res.bites++;
@@ -758,7 +816,26 @@ export function career(sc: Scenario, seed: number): CareerResult {
         const eff = cfg.levels[difficultyOf(sp.rarity, loc.tier)];
         const hk = hookStats(pl, eff);
         let quality: Quality | null = null;
-        for (let attempt = 0; ; attempt++) {
+        res.hookedByRarity[sp.rarity]++;
+        if (sc.rules === 'strict') {
+          // the bite comes back until the hook is set; then one fight, and a lost one is a lost fish
+          let misses = 0;
+          while (misses < 3 && rng() < hk.miss) {
+            misses++;
+            res.hookMissed++;
+            secs += hk.window + TIMING.retryWait;
+          }
+          secs += (misses < 3 ? hk.reaction : pl.hook.median) + TIMING.fightReady;
+          const f = judgeFightStats(sc.player, Math.min(5, difficultyOf(sp.rarity, loc.tier)), greenOf(c.ticket.totals.rod.catch));
+          if (rng() < f.land) {
+            secs += f.seconds;
+            quality = 'B';
+          } else {
+            res.fightsLost++;
+            secs += f.secondsLost + TIMING.fightLoss + TIMING.txReel;
+          }
+        }
+        for (let attempt = 0; sc.rules !== 'strict'; attempt++) {
           const forced = sc.rules === 'chain' && attempt >= 3;
           if (forced) {
             secs += pl.hook.median;
@@ -790,11 +867,13 @@ export function career(sc: Scenario, seed: number): CareerResult {
           }
           secs += TIMING.retryWait;
         }
-        if (quality === null) secs += TIMING.noBiteMessage;
-        else {
+        if (quality === null) {
+          res.lostByRarity[sp.rarity]++;
+          secs += TIMING.noBiteMessage;
+        } else {
           // on the contracts the grade is the contract's roll, whatever the fight was like
-          if (sc.rules === 'chain') quality = pickQuality(contractQuality(c.ticket.totals.rod.catch, sp.rarity), rng);
-          secs += (sc.rules === 'chain' ? TIMING.txReel : 0) + pl.between;
+          if (sc.rules !== 'local') quality = pickQuality(contractQuality(c.ticket.totals.rod.catch, sp.rarity), rng);
+          secs += (sc.rules === 'local' ? 0 : TIMING.txReel) + pl.between;
           const l = landFish(s, c.ticket, h, quality, now);
           s = l.save;
           res.landed++;
@@ -888,7 +967,7 @@ export interface CupSetup {
  * the free one: holds the middle of the green, lets go when it notices a warning (unless it misses it), takes up
  * slack during a jerk, all `lag` late and with a reading error.
  */
-function cupFight(seed: bigint, d: number, green: number, skill: Skill, rng: () => number): { landed: boolean; ticks: number; good: number } {
+function cupFight(seed: bigint, d: number, green: number, skill: Skill, rng: () => number): { landed: boolean; snapped: boolean; ticks: number; good: number } {
   const p = fightParams(d, green);
   const st = fightStart(seed);
   const seen: { tension: number; mood: number }[] = [];
@@ -907,7 +986,7 @@ function cupFight(seed: bigint, d: number, green: number, skill: Skill, rng: () 
     const alarmed = was.mood === PULL || (was.mood === WARN && !missed);
     fightTick(st, alarmed ? tension < p.lo : tension < aim, p);
   }
-  return { landed: st.result === 'landed', ticks: st.ticks, good: st.good };
+  return { landed: st.result === 'landed', snapped: st.result === 'snapped', ticks: st.ticks, good: st.good };
 }
 
 const QUALITY_INDEX: Record<Quality, number> = { D: 0, C: 1, B: 2, A: 3, S: 4 };

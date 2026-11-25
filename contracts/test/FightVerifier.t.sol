@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {FightVerifier} from "../src/FightVerifier.sol";
+import {FightBot} from "./FightBot.sol";
 
 /// @notice The verifier against fights recorded by the web client's twin (web/src/game/fight.ts): the two must
 ///         agree tick for tick, or a fight won in the browser would be lost onchain.
@@ -57,5 +58,35 @@ contract FightVerifierTest is Test {
         uint256 g = gasleft();
         v.replay(77 << 224, 0, 62_000, inputs);
         assertLt(g - gasleft(), 1_500_000);
+    }
+
+    // ------------------------------------------------------------------ the tests' own player (test/FightBot.sol)
+
+    /// @dev The bot's tick is a copy of the verifier's. Whatever it says about its own recording, the verifier
+    ///      says too.
+    function testFuzz_theBotAndTheVerifierAgree(uint256 seed, uint8 d, uint32 green) public view {
+        d = uint8(bound(d, 0, 5));
+        green = uint32(bound(green, 15_000, 37_500));
+        (bytes memory inputs, bool landed) = FightBot.play(v, seed, d, green);
+        (bool ok, uint256 ticks,) = v.replay(seed, d, green, inputs);
+        assertEq(ok, landed);
+        assertLe(ticks, inputs.length * 8);
+        if (landed) assertGt(inputs.length * 8, ticks - 1);
+    }
+
+    /// @dev The bot is what the tests of the game fish with, so it has to land nearly everything: the hardest
+    ///      fish with the narrowest band the game has, the easiest with the widest, and what is in between.
+    function test_theBotLandsNearlyEveryFight() public view {
+        uint32[3] memory greens = [uint32(15_000), 25_000, 37_500];
+        for (uint256 d; d <= 5; d++) {
+            for (uint256 g; g < 3; g++) {
+                uint256 landedCount;
+                for (uint256 i; i < 40; i++) {
+                    (, bool landed) = FightBot.play(v, uint256(keccak256(abi.encode(d, g, i))), d, greens[g]);
+                    if (landed) landedCount++;
+                }
+                assertGe(landedCount, 38, string.concat("difficulty ", vm.toString(d), ", green ", vm.toString(greens[g])));
+            }
+        }
     }
 }

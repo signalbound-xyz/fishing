@@ -628,6 +628,8 @@ var SLACK = 64n;
 /** Under this balance the report says so (0.002 ETH: a few hundred transactions on Fluent). */
 var LOW_BALANCE_WEI = 2000000000000000n;
 var MAX_MISSES = 5e4;
+/** FishingGame.FIGHT_BLOCKS: how long a hooked fish is its player's alone. Only used to say so. */
+var FIGHT_BLOCKS = 600;
 /** The clock is spoken of once its lag is this fraction of the beacon's margin: a half. */
 var CLOCK_WARN_PARTS = 2;
 var max = (a, b) => a > b ? a : b;
@@ -660,6 +662,7 @@ async function runKeeper(k, opts = {}) {
 			seen: 0,
 			reeled: 0,
 			expired: 0,
+			fighting: 0,
 			left: 0,
 			window: 0
 		},
@@ -684,7 +687,8 @@ async function runKeeper(k, opts = {}) {
 	if (k.chain.hunt) await settleHits(k, k.chain.hunt, head, opts, report, go);
 	await reelCasts(k, head, opts, report, go);
 	report.water = await k.chain.water();
-	if (opts.drain && report.water && report.water.inWater !== 0 && !opts.dryRun) report.notes.push(report.water.paused ? `${report.water.inWater} cast(s) are still in the water: run the drain again (a cast can be reeled in two blocks after it was made), or with --from <block> if some are older than the reel window` : `${report.water.inWater} cast(s) are in the water and casting is not paused, so new ones keep coming: pause first (contracts/script/Water.s.sol)`);
+	if (report.casts.fighting !== 0) report.notes.push(`${report.casts.fighting} fish on the line: only its player can reel one in for ${FIGHT_BLOCKS} blocks after the cast, then anyone clears it (and the fish is gone)` + (opts.drain ? ": run the drain again when that time is up" : ""));
+	if (opts.drain && report.water && report.water.inWater !== 0 && !opts.dryRun && report.water.inWater !== report.casts.fighting) report.notes.push(report.water.paused ? `${report.water.inWater} cast(s) are still in the water: run the drain again (a cast can be reeled in two blocks after it was made), or with --from <block> if some are older than the reel window` : `${report.water.inWater} cast(s) are in the water and casting is not paused, so new ones keep coming: pause first (contracts/script/Water.s.sol)`);
 	return report;
 }
 function weiText(wei) {
@@ -840,8 +844,10 @@ async function reelCasts(k, head, opts, report, go) {
 			continue;
 		}
 		try {
-			await k.chain.reelFor(l.player);
-			if (expired) report.casts.expired++;
+			if (await k.chain.reelFor(l.player) === "fishOn") {
+				report.casts.fighting++;
+				report.casts.left++;
+			} else if (expired) report.casts.expired++;
 			else report.casts.reeled++;
 		} catch (e) {
 			const now_ = await k.chain.castOf(l.player).catch(() => null);
@@ -1367,6 +1373,11 @@ var fishingGameAbi = [
 				},
 				{
 					"name": "counted",
+					"type": "bool",
+					"internalType": "bool"
+				},
+				{
+					"name": "fight",
 					"type": "bool",
 					"internalType": "bool"
 				}
@@ -2143,7 +2154,11 @@ var fishingGameAbi = [
 	{
 		"type": "function",
 		"name": "reel",
-		"inputs": [],
+		"inputs": [{
+			"name": "",
+			"type": "bytes",
+			"internalType": "bytes"
+		}],
 		"outputs": [],
 		"stateMutability": "nonpayable"
 	},
@@ -2545,6 +2560,17 @@ var fishingGameAbi = [
 	},
 	{
 		"type": "function",
+		"name": "setReelJudge",
+		"inputs": [{
+			"name": "judge",
+			"type": "address",
+			"internalType": "contract IReelJudge"
+		}],
+		"outputs": [],
+		"stateMutability": "nonpayable"
+	},
+	{
+		"type": "function",
 		"name": "setSeasonHunt",
 		"inputs": [{
 			"name": "hunt",
@@ -2823,6 +2849,31 @@ var fishingGameAbi = [
 	},
 	{
 		"type": "event",
+		"name": "Escaped",
+		"inputs": [
+			{
+				"name": "player",
+				"type": "address",
+				"indexed": true,
+				"internalType": "address"
+			},
+			{
+				"name": "locationId",
+				"type": "uint8",
+				"indexed": false,
+				"internalType": "uint8"
+			},
+			{
+				"name": "speciesId",
+				"type": "uint16",
+				"indexed": false,
+				"internalType": "uint16"
+			}
+		],
+		"anonymous": false
+	},
+	{
+		"type": "event",
 		"name": "FishSold",
 		"inputs": [
 			{
@@ -3022,6 +3073,11 @@ var fishingGameAbi = [
 	{
 		"type": "error",
 		"name": "EnergyFull",
+		"inputs": []
+	},
+	{
+		"type": "error",
+		"name": "FishOn",
 		"inputs": []
 	},
 	{
@@ -3609,6 +3665,17 @@ var gameLensAbi = [
 	},
 	{
 		"type": "function",
+		"name": "fightBlocks",
+		"inputs": [],
+		"outputs": [{
+			"name": "",
+			"type": "uint256",
+			"internalType": "uint256"
+		}],
+		"stateMutability": "pure"
+	},
+	{
+		"type": "function",
 		"name": "fishNft",
 		"inputs": [],
 		"outputs": [{
@@ -3902,6 +3969,11 @@ var gameLensAbi = [
 							"name": "counted",
 							"type": "bool",
 							"internalType": "bool"
+						},
+						{
+							"name": "fight",
+							"type": "bool",
+							"internalType": "bool"
 						}
 					]
 				},
@@ -4001,6 +4073,17 @@ var gameLensAbi = [
 					"internalType": "bool"
 				}
 			]
+		}],
+		"stateMutability": "view"
+	},
+	{
+		"type": "function",
+		"name": "reelJudge",
+		"inputs": [],
+		"outputs": [{
+			"name": "",
+			"type": "address",
+			"internalType": "address"
 		}],
 		"stateMutability": "view"
 	},
@@ -5863,23 +5946,41 @@ var seasonHuntAbi = [
 	}
 ];
 // src/game/release.ts
-/** Words in a cast from release 004 on; six before it. */
-var CAST_WORDS_004 = 7;
-/** Whether the game that answered `castOf` with `data` is release 004 or later. Throws on an answer that is no cast at all. */
-function isRelease004(castOfAnswer) {
-	const words = castOfAnswer ? (castOfAnswer.length - 2) / 64 : 0;
+/** Words in a cast: six up to release 003, seven in 004, eight from 005 on. */
+var WORDS = {
+	6: 3,
+	7: 4,
+	8: 5
+};
+var wordsOf = (answer) => answer ? (answer.length - 2) / 64 : 0;
+/** The release of the game that answered `castOf` with `data`. Throws on an answer that is no cast at all. */
+function releaseOf(castOfAnswer) {
+	const words = wordsOf(castOfAnswer);
 	if (words < 6 || !Number.isInteger(words)) throw new Error("castOf answered with something that is not a cast");
-	return words >= CAST_WORDS_004;
+	return WORDS[words] ?? 5;
 }
+/** Whether the game that answered `castOf` with `data` is release 004 or later. Throws on an answer that is no cast at all. */
+var isRelease004 = (castOfAnswer) => releaseOf(castOfAnswer) >= 4;
 /** How long after its randomness block a cast can be landed: the long window needs the release and the chain's history both. */
 function reelWindowOf(release004, historyAnswers) {
 	return release004 && historyAnswers ? 8191n : 256n;
 }
 var current = gameLensAbi.find((x) => x.type === "function" && x.name === "playerView");
-({ ...current }), { ...current.outputs[0] }, current.outputs[0].components.filter((c) => c.name !== "castingPaused").map((c) => c.name === "cast" && "components" in c ? {
-	...c,
-	components: c.components.filter((x) => x.name !== "counted")
-} : c);
+/** `playerView` as an earlier lens answers it: the current one without the fields later releases added. */
+function shapeWithout(view, cast) {
+	return [{
+		...current,
+		outputs: [{
+			...current.outputs[0],
+			components: current.outputs[0].components.filter((c) => !view.includes(c.name)).map((c) => c.name === "cast" && "components" in c ? {
+				...c,
+				components: c.components.filter((x) => !cast.includes(x.name))
+			} : c)
+		}]
+	}];
+}
+shapeWithout(["castingPaused"], ["counted", "fight"]);
+shapeWithout([], ["fight"]);
 // src/server/keeperChain.ts
 /** The chain and the drand relays, as the keeper uses them (server/keeper.ts): JSON-RPC through viem, and fetch. */
 var beaconAbi = parseAbi([
@@ -6202,14 +6303,28 @@ function keeperChain(o) {
 			const word = (i) => BigInt("0x" + data.slice(2 + 64 * i, 2 + 64 * (i + 1)));
 			return {
 				targetBlock: word(0),
-				counted: data.length >= 450 && word(6) !== 0n
+				counted: data.length >= 450 && word(6) !== 0n,
+				fight: data.length >= 514 && word(7) !== 0n
 			};
 		},
-		reelFor: (player) => send({
-			...game,
-			functionName: "reelFor",
-			args: [player]
-		}),
+		async reelFor(player) {
+			try {
+				await send({
+					...game,
+					functionName: "reelFor",
+					args: [player]
+				});
+				return "reeled";
+			} catch (e) {
+				if ((revertName(e) ?? await client.simulateContract({
+					...game,
+					functionName: "reelFor",
+					args: [player],
+					account: o.account
+				}).then(() => null, revertName)) === "FishOn") return "fishOn";
+				throw e;
+			}
+		},
 		async water() {
 			if (!await isCounting()) return null;
 			const [inWater, paused] = await Promise.all([client.readContract({

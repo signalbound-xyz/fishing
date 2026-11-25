@@ -560,6 +560,11 @@ export const fishingGameAbi = [
             "name": "counted",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "fight",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -1425,7 +1430,13 @@ export const fishingGameAbi = [
   {
     "type": "function",
     "name": "reel",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -1868,6 +1879,19 @@ export const fishingGameAbi = [
   },
   {
     "type": "function",
+    "name": "setReelJudge",
+    "inputs": [
+      {
+        "name": "judge",
+        "type": "address",
+        "internalType": "contract IReelJudge"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setSeasonHunt",
     "inputs": [
       {
@@ -2169,6 +2193,31 @@ export const fishingGameAbi = [
   },
   {
     "type": "event",
+    "name": "Escaped",
+    "inputs": [
+      {
+        "name": "player",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "locationId",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "speciesId",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FishSold",
     "inputs": [
       {
@@ -2377,6 +2426,11 @@ export const fishingGameAbi = [
   {
     "type": "error",
     "name": "EnergyFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FishOn",
     "inputs": []
   },
   {

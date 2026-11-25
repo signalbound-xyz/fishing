@@ -51,6 +51,7 @@ async function pass() {
   console.log(
     `[keeper] block ${body.head}${body.dryRun ? ' (dry run)' : ''} · hunt: ${hunt.attempts} attempt(s) in ${hunt.seasons} season(s), ${hunt.hits} hit(s), ${hunt.settled} recorded, ${hunt.waiting} waiting` +
       ` · casts: ${casts.seen} in the water seen, ${casts.reeled} reeled in, ${casts.expired} expired, ${casts.left} left` +
+      (casts.fighting ? ` (${casts.fighting} being fought)` : '') +
       (water ? ` · water: ${water.inWater} cast(s)${water.paused ? ', casting paused' : ''}` : '') +
       (body.clock?.marginSeconds != null ? ` · clock: ${body.clock.lagSeconds} s behind, margin ${body.clock.marginSeconds} s` : '') +
       (body.failed ? ` · ${body.failed} FAILED` : '') +
@@ -63,8 +64,10 @@ async function pass() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (drain && !dry) {
-  // pass after pass: a cast made a moment ago can be reeled in two blocks later
+  // pass after pass: a cast made a moment ago can be reeled in two blocks later. A fish on the line is its player's
+  // for 600 blocks (FishingGame.FIGHT_BLOCKS): those are waited for, a quarter of a minute at a time.
   let failed = false;
+  let waits = 0;
   for (let i = 0; i < 20; i++) {
     const r = await pass();
     if (!r) {
@@ -83,6 +86,13 @@ if (drain && !dry) {
       console.log('[keeper] casts remain that this pass could not find: they are older than the range it looked at, try --from <block>');
       failed = true;
       break;
+    }
+    if (r.casts.fighting > 0 && r.casts.fighting === r.water.inWater && waits < 60) {
+      // nothing else is left: a wait for the fights is not one of the twenty tries
+      waits++;
+      i--;
+      await sleep(15_000);
+      continue;
     }
     await sleep(3_000);
   }

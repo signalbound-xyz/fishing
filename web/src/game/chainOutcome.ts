@@ -8,14 +8,38 @@
  * This is a prediction for presentation only. It decides nothing: the contract computes the same thing again
  * when it settles, and whatever it says is the result. fixtures/outcomes.json holds outcomes produced by the
  * contract itself (contracts/test/Vectors.t.sol), and the tests replay them through this module.
+ *
+ * A fish that bites has to be reeled in (contracts/src/ReelJudge.sol): the fight is fixed with the cast too, and
+ * is worked out here the way the judge does (`castFight`). The same vectors carry each fish's fight and a
+ * recording that lands it, so neither the fight nor its replay (game/fight.ts) can drift from the contracts.
  */
 import { encodeAbiParameters, keccak256, type Address, type Hex } from 'viem';
+import { fightSeedOf } from './fight';
 
 export interface ChainCatalog {
   config: { blendChancePpm: number; blendMaxWins: number; qualityPerCatch: number; qualityPerRarity: number };
   locations: { special: number; speciesIds: number[]; weights: number[] }[];
   species: { rarity: number; minWeight: number; maxWeight: number; hidden: boolean }[];
   specials: { speciesId: number; chancePpm: number; pity: number }[];
+  /** How rough each water is, by location id: what the judge of the reel fight adds to a fish's rarity. */
+  tiers: number[];
+}
+
+/** The reel fight of a hooked fish: the seed of the fish's moves, how hard it fights (0 … 5) and the green band. */
+export interface CastFight {
+  seed: bigint;
+  difficulty: number;
+  /** Width of the green band, in units of the gauge (game/fight.ts, `U`). */
+  green: number;
+}
+
+/** ReelJudge: a quarter of the gauge with the starter rod, 750 units a point of the rod's catch, 15% … 37.5%. */
+export const FIGHT_GREEN = { base: 25_000, perCatch: 750, min: 15_000, max: 37_500 } as const;
+export const greenOf = (rodCatch: number): number => Math.min(FIGHT_GREEN.max, Math.max(FIGHT_GREEN.min, FIGHT_GREEN.base + rodCatch * FIGHT_GREEN.perCatch));
+
+/** ReelJudge.fightOf, for a cast whose seed is `seed` (`castSeed`). */
+export function castFight(seed: bigint, rarity: number, waterTier: number, rodCatch: number): CastFight {
+  return { seed: fightSeedOf(seed), difficulty: Math.min(5, rarity + waterTier), green: greenOf(rodCatch) };
 }
 
 export interface CastInput {
@@ -41,7 +65,7 @@ export type CastOutcome =
   | { kind: 'expired' }
   | { kind: 'missed' }
   | { kind: 'bottle'; amount: number }
-  | { kind: 'caught'; speciesId: number; weight: number; /** 0 D … 4 S */ quality: number; special: boolean };
+  | { kind: 'caught'; speciesId: number; weight: number; /** 0 D … 4 S */ quality: number; special: boolean; /** The fight it has to be landed in, where fights are checked. */ fight: CastFight };
 
 const MASK32 = 0xffffffffn;
 
@@ -80,6 +104,7 @@ export function resolveCast(c: ChainCatalog, i: CastInput): CastOutcome {
     weight: rollWeight(s.minWeight, s.maxWeight, i.loadout.weight, seed >> 128n),
     quality: rollQuality(c, i.loadout.rodCatch, s.rarity, Number((seed >> 200n) % 10_000n)),
     special,
+    fight: castFight(seed, s.rarity, c.tiers[i.locationId] ?? 0, i.loadout.rodCatch),
   };
 }
 

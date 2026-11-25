@@ -19,8 +19,23 @@ One difference is deliberate. Locally the hook and the reel fight decide whether
 it is. On the contracts the fish, its weight and its quality are rolled by the contract (a client-reported result
 could be forged). The client works the pending outcome out as soon as its block exists
 (`src/game/chainOutcome.ts`, checked against vectors produced by the contract), plays a real bite, hook and fight
-on it, and settles afterwards; a lost fight there is a retry, not a lost fish. The reasoning, the trust model and
-the randomness review are in [../ARCHITECTURE.md](../ARCHITECTURE.md).
+on it, and settles afterwards. What a lost fight costs there depends on the game the network runs:
+
+- **Up to release 004** (Fluent Testnet today), and on release 005 with no reel judge attached: a lost fight is a
+  retry, each easier, and the third is hauled in. The fight is the floating-point one in `src/game/minigame.ts`
+  and decides nothing.
+- **Release 005 with a reel judge attached**: one fight per fish, in the integer machine the contract replays
+  (`src/game/fight.ts`, the twin of `contracts/src/FightVerifier.sol`). The page records it and sends the
+  recording with the settlement; a lost fight is sent too and the fish is gone, with nothing given for it. The
+  page shows the rule before the cast, counts down before the fight starts, and plays no fish twice: the fight of
+  a cast is remembered in this browser (`src/play/fightLog.ts`), so a reload in the middle of a fight comes back
+  to a lost fish, not to a new try.
+
+The page tells which rule a cast is under from the game's own answer for that cast (`castNeedsFight` in
+`src/game/release.ts`), not from its build. The local game follows the stricter rule with the same machine: one
+fight, and a lost one is a lost fish. The reasoning, the trust model, what the check does not prove (a script can
+compute a recording that lands the fish) and the randomness review are in
+[../ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ```sh
 pnpm install
@@ -29,6 +44,7 @@ pnpm test         # unit tests of the game rules (vitest)
 pnpm sim          # balance simulation, rewrites BALANCE.md
 pnpm sim:audit    # balance audit and experiments, rewrites BALANCE_AUDIT.md
 pnpm sim:daily    # what a day's three challenges cost, rewrites the table in DAILY_CHALLENGES.md
+pnpm sim:reel     # what losing a fish for good does to landing rates, PEARL, XP and progress, rewrites REEL_BALANCE.md
 ```
 
 ## Local game
@@ -110,16 +126,19 @@ nothing in the browser decides a catch, a balance or an unlock; the only client-
 | `pnpm api:dev` | runs the verifier on this machine (port 8787) with the environment of [DAILY_REWARDS.md](DAILY_REWARDS.md) |
 | `pnpm sim:daily` | plays the daily challenge sets with a model player, writes the cost table in `DAILY_CHALLENGES.md` |
 | `pnpm sim:hunt` | plays Season Hunt seasons for crowds of 10 to 10,000 model anglers, writes the tables in `SEASON_HUNT_BALANCE.md` |
+| `pnpm sim:reel` | compares the contracts before and after the reel judge (a lost fight is a retry / a lost fish) for three model players, writes `REEL_BALANCE.md` (about a minute) |
 | `pnpm sim:week` | works out and plays the three hunts of the repository's week file for the same crowds, writes the weekly tables in `SEASON_HUNT_BALANCE.md` |
 | `pnpm keeper` | the operator's keeper from a terminal: `--dry-run` looks and sends nothing, `--watch` repeats, `--drain` reels in every cast in the water ([KEEPER.md](KEEPER.md)) |
 | `pnpm live:read` | asks the live network, reading only: the block-hash history the long reel window relies on, the deployed lens in the shape this build decodes, the keeper's dry run |
+| `pnpm live:reel` | the reel fight end to end on a local chain (anvil): the page's own code against a fresh deployment; see "The reel fight end to end" below |
 | `pnpm live` | the tournament rehearsal on a live network; sends transactions with the deployer's key (see the header of `live/cup.live.ts`) |
 
 After changing the contracts: `forge build` (and redeploy if needed), then `pnpm sync`. From release 004 the
 deployed `GameLens` belongs to one build of the game (it reads the game's storage by slot). The client asks the
 game which release it is and reads either: release 003 (the player's view without the two fields 004 added, a
-256-block reel window) or 004 (`src/game/release.ts`; `pnpm live:read` says which the network runs). What it
-cannot do is read a new game through an old lens: after an upgrade the lens address in `deployments/` changes,
+256-block reel window), 004, or 005 (`reel(bytes)`, one more word per cast, a lens that knows the reel judge;
+`src/game/release.ts`; `pnpm live:read` says which the network runs). What it cannot do is read a new game
+through an old lens: after an upgrade the lens address in `deployments/` changes,
 and the client must be published again.
 If `contracts/out` is missing, `sync` keeps the already generated files.
 
@@ -239,11 +258,40 @@ numbers are on [My Stats](#my-stats-profile), which reads nothing from it.
 What the page shows is measured from the person at the keyboard. What `pnpm sim` and `pnpm sim:audit` print is a
 simulation with model players. The two are kept apart on purpose; see BALANCE_REVIEW.md for what to compare.
 
+## The reel fight end to end
+
+`pnpm live:reel` (`live/reel.live.ts`) runs the fight between the page's own code and the contracts on a local
+chain. It refuses any chain but 31337 and takes its key from `LIVE_KEY`, one of the well-known accounts anvil
+starts with: never a key that holds anything.
+
+```sh
+anvil --block-time 1                                    # in one terminal
+cd ../contracts
+forge create test/Base.t.sol:MockBlend --rpc-url http://127.0.0.1:8545 --private-key <anvil key> --broadcast
+BLEND_TOKEN=<the address it printed> forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast --slow --private-key <anvil key>
+cd ../web && LIVE_KEY=<anvil key> pnpm live:reel
+rm ../deployments/31337.json                            # the local deployment is not part of the repository
+```
+
+A fresh deployment has the judge attached. The test casts, works out what bit and which fight it has to be landed
+in with the code the page uses (`chainOutcome.ts`), plays the fight on the page's machine (`fight.ts`) and sends
+the recording. The contract must do exactly what the page's replay says: mint the predicted fish for a recording
+that lands it, and let it go for a snapped line, an empty recording and a recording that comes after the 600
+blocks. In between it tries the ways around: somebody else's `reelFor`, the keeper's drain (which must send
+nothing and report a fight), a new cast over the fish, a second recording for the same fish.
+
+**What it does not cover:** the page itself in a browser against a game with a judge. Sign-in is Fluent Connect,
+which has no wallet on a local chain, so the strict flow of `play/ui/pond.ts` (the countdown, the one fight, the
+settlement of a lost fight, coming back after a reload) has been driven in the browser in local mode only, where
+it shares the fight code and the screens but not the transactions. It needs a pass by hand on Fluent Testnet once
+a judge is attached there.
+
 ## Balance lab
 
 `sim/lab.ts` plays whole careers and single sittings with the real rules: three model players (beginner, average,
-experienced), either rule set (the contracts, where a lost fight is a retry, or the local game, where it is a lost
-fish), a play pattern (from every other day to a check-in every four hours with refills) and a start (a new
+experienced), a rule set (the contracts up to release 004, where a lost fight is a retry; the contracts with the
+reel judge, where the one fight the contract replays decides whether there is a fish; or the local game), a play
+pattern (from every other day to a check-in every four hours with refills) and a start (a new
 player or one who owns everything). `sim/scenarios.ts` holds what the audit runs: alternative energy rules (cast
 prices, bar size, refill price, payouts), reel difficulty curves, cups and mastery tiers. Edit it and run
 `pnpm sim:audit`; nothing there changes the game or the contracts. `sim/lab.test.ts` (part of `pnpm test`) checks
@@ -258,8 +306,9 @@ src/game/              the rules, pure TypeScript, no DOM and no storage
   equipment.ts         rod + lure + location + special bonuses, capped
   generate.ts          species odds (normalised), weight roll, special roll
   economy.ts           prices, XP, levels, repair and refill costs
-  minigame.ts          hook window, bite delay and the reel fight as pure functions; model players
-  chainOutcome.ts      what a pending cast will be, computed as the contract computes it
+  minigame.ts          hook window, bite delay and the floating-point reel fight (the flow up to release 004); model players
+  fight.ts             the fight the contracts replay, in integers: the twin of FightVerifier.sol (tournaments, and every fish under the reel judge)
+  chainOutcome.ts      what a pending cast will be, computed as the contract computes it, and the fight the judge gives it
   tournament.ts        score, week boundaries, top ten, demo standings
   hunt.ts              Season Hunt: the chance of a seasonal cast as the contract computes it, odds as text, statuses, the drand round of a cast
   week.ts              weekly seasons: the week file and its validation, grouping the contract's seasons into weeks, card and week statuses, the countdown, the archive
@@ -280,6 +329,7 @@ src/play/              the local game's shell
   chain.ts             contract backend: reads via GameLens, transactions, catalog check
   state.ts             the current Save (localStorage in local mode, a view of chain state otherwise)
   fishSprite.ts        pixel fish drawn from shape parameters
+  fightLog.ts          the one fight of a cast, remembered in this browser: started, ended, its recording
   telemetry.ts         gameplay telemetry in the browser: the recorder over localStorage, what the UI reports
   daily.ts             daily challenges in the browser: the chain reader, its cache, what the UI shows
   dailyReward.ts       the reward in the browser: what the contract says, the claim (verifier, then one transaction)
@@ -295,6 +345,8 @@ api/daily-reward.js    the verifier as one file for Vercel, generated by `pnpm b
 api/keeper.js          the keeper, the same way; switched off until CRON_SECRET is set (KEEPER.md)
 scripts/keeper.mjs     `pnpm keeper`
 live/chain.live.ts     `pnpm live:read`
+live/reel.live.ts      `pnpm live:reel`: the reel fight on a local chain
+sim/reel.sim.ts        the reel fight with the fish at stake (REEL_BALANCE.md)
 sim/balance.sim.ts     balance simulation (BALANCE.md)
 sim/lab.ts             the balance lab: model players, rule sets, careers day by day
 sim/scenarios.ts       what the audit tries: energy rules, reel curves, cups, mastery tiers

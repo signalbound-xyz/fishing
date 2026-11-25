@@ -3,12 +3,12 @@
  * `Save` shape the local game uses, so the UI does not care where the state lives; writes go out as transactions.
  * Here the chain is the source of truth: nothing in localStorage decides a catch, a balance or an unlock.
  */
-import { encodeFunctionData, erc20Abi, formatEther, pad, parseEther, parseEventLogs, toHex, type Address, type Hex, type TransactionReceipt } from 'viem';
-import { bottlePoolAbi, fishingGameAbi, gameLensAbi, pearlExchangeAbi } from '../abi';
+import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, encodeFunctionData, erc20Abi, formatEther, pad, parseAbi, parseEther, parseEventLogs, toHex, type Abi, type Address, type Hex, type TransactionReceipt } from 'viem';
+import { bottlePoolAbi, fishingGameAbi, gameLensAbi, pearlExchangeAbi, reelJudgeAbi } from '../abi';
 import { publicClient } from '../clients';
 import { CHAIN_ID, LOCAL_GAME, deployment } from '../config';
-import { resolveCast, type CastOutcome, type ChainCatalog } from '../game/chainOutcome';
-import { CAST_OF_SELECTOR, decodePlayerView, isRelease004, reelWindowOf, type PlayerView } from '../game/release';
+import { greenOf, resolveCast, type CastOutcome, type ChainCatalog } from '../game/chainOutcome';
+import { CAST_OF_SELECTOR, castNeedsFight, decodePlayerView, releaseOf, reelWindowOf, type GameRelease, type PlayerView } from '../game/release';
 import { LOCATIONS, QUALITIES, SPECIALS, SPECIES, TUNING, BLEND_PRIZE } from '../game/content';
 import { achievements } from '../game/progress';
 import { freshSave } from '../game/save';
@@ -36,8 +36,11 @@ export interface Standing {
 
 /** Chain facts that do not fit the Save shape. */
 export interface World {
-  /** The player's unresolved cast, if any. */
-  cast: { targetBlock: bigint; nonce: bigint; locationId: number; rod: number; lure: number; special: number } | null;
+  /**
+   * The player's unresolved cast, if any. `fight`: a fish on it has to be reeled in, in one try, and is lost
+   * otherwise (the game had a judge of the reel fight attached when the cast was made).
+   */
+  cast: { targetBlock: bigint; nonce: bigint; locationId: number; rod: number; lure: number; special: number; fight: boolean } | null;
   /** What the pending cast's outcome depends on besides the block hash (see game/chainOutcome.ts). */
   rolls: { blendWins: number; xp: bigint; specialsFound: number; dry: number[] };
   week: number;
@@ -51,9 +54,28 @@ export interface World {
   bottle: { amount: number; chancePpm: number; minLevel: number; maxWins: number; dailyMax: number; today: number; left: number } | null;
   /** The owner has stopped new casts for a while (before a change of rules or of the game's code). Reeling in still works. */
   castingPaused: boolean;
+  /**
+   * The reel fight as the contracts have it. `on`: a judge is attached, so a fish hooked by a cast made now has to
+   * be reeled in. `blocks`: how many blocks after its randomness block such a fish can still be landed.
+   */
+  fights: { on: boolean; blocks: number };
 }
 
-export const world: World = { cast: null, rolls: { blendWins: 0, xp: 0n, specialsFound: 0, dry: [] }, week: 0, standings: [], history: [], loaded: false, blend: null, bottle: null, castingPaused: false };
+/** FishingGame.FIGHT_BLOCKS, until the lens has said it (checked against the contracts in `catalogMismatches`). */
+export const FIGHT_BLOCKS = 600;
+
+export const world: World = {
+  cast: null,
+  rolls: { blendWins: 0, xp: 0n, specialsFound: 0, dry: [] },
+  week: 0,
+  standings: [],
+  history: [],
+  loaded: false,
+  blend: null,
+  bottle: null,
+  castingPaused: false,
+  fights: { on: false, blocks: FIGHT_BLOCKS },
+};
 
 // ------------------------------------------------------------------ client-side preferences (not game state)
 
@@ -100,34 +122,82 @@ function recalledLocation(): number {
 // ------------------------------------------------------------------ reads
 
 /**
- * Whether the game is release 004 or later (game/release.ts). An upgrade goes one way, so a yes is kept for the
- * life of the page; a no is asked again, which is how an open page notices the upgrade.
+ * The release of the game (game/release.ts), by its own answer about a cast. An upgrade goes one way, so the
+ * latest one seen is kept for the life of the page; it is asked again with every read of the player, which is how
+ * an open page notices an upgrade.
  */
-let release004 = false;
+let gameRelease: GameRelease = 3;
+const castOfCall = (who: Address): { to: Address; data: Hex } => ({ to: game.address, data: `${CAST_OF_SELECTOR}${pad(who).slice(2)}` });
 async function gameIsRelease004(): Promise<boolean> {
-  if (!release004) release004 = isRelease004((await publicClient.call({ to: game.address, data: `${CAST_OF_SELECTOR}${pad(zero).slice(2)}` })).data);
-  return release004;
+  if (gameRelease < 4) gameRelease = releaseOf((await publicClient.call(castOfCall(zero))).data);
+  return gameRelease >= 4;
 }
 
-/** The lens's view of a player, read in the shape of the release the chain runs. */
-async function readPlayerView(who: Address): Promise<PlayerView> {
-  const [is004, answer] = await Promise.all([gameIsRelease004(), publicClient.call({ to: lens.address, data: encodeFunctionData({ abi: gameLensAbi, functionName: 'playerView', args: [who] }) })]);
+/** A call that the contract itself turned down (it has no such function, or it reverted): an answer, not an outage. */
+const refused = (e: unknown): boolean => e instanceof BaseError && !!e.walk((x) => x instanceof ContractFunctionRevertedError || x instanceof ContractFunctionZeroDataError);
+
+let lensReleasePromise: Promise<GameRelease> | null = null;
+/**
+ * The release the lens of this build was made for, which is the shape it answers in. A lens never changes, so the
+ * answer is kept. Asked of the lens itself: one that knows fights says how long a fight may take. (Between an
+ * upgrade of the game and the publishing of the page built for it, the page reads the new game through the old
+ * lens: the game's release is then one ahead of the lens's.)
+ */
+function lensRelease(): Promise<GameRelease> {
+  lensReleasePromise ??= publicClient
+    .readContract({ ...lens, functionName: 'fightBlocks' })
+    .then(
+      (blocks): GameRelease => {
+        world.fights.blocks = Number(blocks);
+        return 5;
+      },
+      async (e): Promise<GameRelease> => {
+        if (!refused(e)) throw e;
+        return (await gameIsRelease004()) ? 4 : 3;
+      },
+    )
+    .catch((e) => {
+      lensReleasePromise = null;
+      throw e;
+    });
+  return lensReleasePromise;
+}
+
+/** Whether a judge of the reel fight is attached to the game now. Only a lens that knows fights can say. */
+async function fightsOn(): Promise<boolean> {
+  if ((await lensRelease()) < 5) return false;
+  return (await publicClient.readContract({ ...lens, functionName: 'reelJudge' })) !== zero;
+}
+
+/**
+ * The lens's view of a player, read in the shape of the lens's release, and what the game itself says about the
+ * player's cast: its release, and whether the cast has to be reeled in. That last word is not taken from the lens:
+ * an older lens leaves it out, and settling such a cast the old way would lose the fish.
+ */
+async function readPlayerView(who: Address): Promise<{ v: PlayerView; fight: boolean }> {
+  const [shape, own, answer] = await Promise.all([lensRelease(), publicClient.call(castOfCall(who)), publicClient.call({ to: lens.address, data: encodeFunctionData({ abi: gameLensAbi, functionName: 'playerView', args: [who] }) })]);
   if (!answer.data) throw new Error('the lens answered with nothing');
-  return decodePlayerView(answer.data, is004);
+  const release = releaseOf(own.data);
+  if (release > gameRelease) gameRelease = release;
+  return { v: decodePlayerView(answer.data, shape), fight: castNeedsFight(own.data) };
 }
 
 /** Loads the connected player's state from the chain as a Save. Returns null when no wallet is connected. */
 export async function loadChainSave(): Promise<Save | null> {
   const me = state.wallet?.address;
   if (!me) return null;
-  const [v, keep, blend, bottle] = await Promise.all([
+  const [view, keep, blend, bottle, judged] = await Promise.all([
     readPlayerView(me),
     publicClient.readContract({ ...lens, functionName: 'keepnet', args: [me] }),
     loadBlend(me),
     loadBottle(),
+    // for the wording before a cast only: what a cast in the water needs is the cast's own word, read above
+    fightsOn().catch(() => world.fights.on),
   ]);
+  const v = view.v;
   world.blend = blend;
   world.bottle = bottle;
+  world.fights.on = judged;
   const now = Date.now();
   const skew = now - Number(v.timestamp) * 1000;
   const p = v.p;
@@ -217,7 +287,7 @@ export async function loadChainSave(): Promise<Save | null> {
   const wanted = recalledLocation();
   s.location = s.permanentUnlocks.includes(wanted) ? wanted : 0;
 
-  world.cast = v.cast.targetBlock === 0n ? null : { targetBlock: v.cast.targetBlock, nonce: v.cast.nonce, locationId: v.cast.locationId, rod: v.cast.rod, lure: v.cast.lure, special: v.cast.special };
+  world.cast = v.cast.targetBlock === 0n ? null : { targetBlock: v.cast.targetBlock, nonce: v.cast.nonce, locationId: v.cast.locationId, rod: v.cast.rod, lure: v.cast.lure, special: v.cast.special, fight: view.fight };
   world.rolls = { blendWins: p.blendWins, xp: p.xp, specialsFound: p.specialsFound, dry: [...v.dry] };
   world.week = week;
   world.castingPaused = v.castingPaused;
@@ -341,6 +411,8 @@ function chainCatalog(): Promise<ChainCatalog> {
       locations: c.locations.map((l) => ({ special: l.special, speciesIds: [...l.speciesIds], weights: [...l.weights] })),
       species: c.species.map((s, i) => ({ rarity: s.rarity, minWeight: s.minWeight, maxWeight: s.maxWeight, hidden: c.hidden[i] })),
       specials: c.specials.map((s) => ({ speciesId: s.speciesId, chancePpm: s.chancePpm, pity: s.pity })),
+      // the judge of the reel fight has its own copy of these; `catalogMismatches` holds the two together
+      tiers: LOCATIONS.map((l) => l.tier),
     };
   })().catch((e) => {
     catalogPromise = null;
@@ -402,11 +474,25 @@ async function readableHash(target: bigint, head: bigint): Promise<Hex | null> {
 }
 
 /**
+ * A fish that was on the line and no longer is: the cast had to be reeled in (`fight`) and the time for it is
+ * over. Nothing can land it now; whoever settles the cast next only takes it out of the water.
+ */
+export type Preview = CastOutcome | { kind: 'escaped'; speciesId: number };
+
+/** Blocks left in which a fish on the player's line can still be landed: the reel has to be mined by then. */
+export async function fightBlocksLeft(): Promise<number> {
+  if (!world.cast) return 0;
+  const head = await publicClient.getBlockNumber({ cacheTime: 0 });
+  return Number(world.cast.targetBlock + BigInt(world.fights.blocks) - head);
+}
+
+/**
  * What the player's pending cast will be when it is settled, or null if its block is not there yet.
  * Presentation only: the settlement transaction computes the real result (see game/chainOutcome.ts).
- * Throws on RPC trouble; the caller then falls back to settling first and showing the result after.
+ * Throws on RPC trouble; the caller then falls back to settling first and showing the result after, or, for a
+ * cast that has to be reeled in, asks again: such a cast is never settled blind.
  */
-export async function previewCast(): Promise<CastOutcome | null> {
+export async function previewCast(): Promise<Preview | null> {
   const me = state.wallet?.address;
   const c = world.cast;
   if (!me || !c) return null;
@@ -420,7 +506,7 @@ export async function previewCast(): Promise<CastOutcome | null> {
     bottles ? publicClient.readContract({ ...bottles, functionName: 'open', args: [world.rolls.xp] }) : Promise.resolve(false),
     bottles ? publicClient.readContract({ ...bottles, functionName: 'amount' }) : Promise.resolve(0n),
   ]);
-  return resolveCast(catalog, {
+  const out = resolveCast(catalog, {
     blockHash,
     player: me,
     game: game.address,
@@ -432,6 +518,8 @@ export async function previewCast(): Promise<CastOutcome | null> {
     specialsFound: world.rolls.specialsFound,
     dry: world.rolls.dry,
   });
+  if (c.fight && out.kind === 'caught' && head > c.targetBlock + BigInt(world.fights.blocks)) return { kind: 'escaped', speciesId: out.speciesId };
+  return out;
 }
 
 /** Blocks left before the pending cast's randomness is out of the contract's reach. */
@@ -447,7 +535,27 @@ export async function blocksUntilExpiry(): Promise<number> {
 export interface GameCall {
   functionName: string;
   args: readonly unknown[];
+  /** For a function the current ABI no longer has (`reel()` of the releases before fights were checked). */
+  abi?: Abi;
 }
+
+/** The game's ABI as releases up to 004 have it where it differs: `reel` takes nothing. Errors and events as now. */
+const releasedReelAbi = [...parseAbi(['function reel()']), ...fishingGameAbi.filter((x) => !(x.type === 'function' && x.name === 'reel'))] as Abi;
+
+/**
+ * The player's own settlement of their cast, on whichever release the chain runs. `recording` is the reel fight
+ * (game/fight.ts, `packInputs`): a cast that has to be reeled in lands its fish for a recording that lands it and
+ * loses it for any other, the empty one included. A cast that needs no fight ignores it.
+ */
+export function reelCall(recording: Hex = '0x'): GameCall {
+  return gameRelease >= 5 ? { functionName: 'reel', args: [recording] } : { abi: releasedReelAbi, functionName: 'reel', args: [] };
+}
+
+/**
+ * Settles the player's cast the way anyone may: with no recording. It takes a bottle or an empty hook out of the
+ * water; with a fish still fighting on the line the game refuses (`FishOn`) and nothing is lost.
+ */
+export const haulCall = (me: Address): GameCall => ({ functionName: 'reelFor', args: [me] });
 
 /** Sends one game transaction. Returns the receipt, or undefined when it failed (the error is already toasted). */
 export async function tx(label: string, request: GameCall, quiet = false): Promise<TransactionReceipt | undefined> {
@@ -468,6 +576,8 @@ export async function tx(label: string, request: GameCall, quiet = false): Promi
 export type ReelOutcome =
   | { kind: 'missed' }
   | { kind: 'expired' }
+  /** A fish was on the line and got away: the fight was lost, never played, or took too long. Nothing was minted. */
+  | { kind: 'escaped'; speciesId: number; locationId: number }
   | { kind: 'bottle'; amount: number }
   | { kind: 'caught'; fishId: string; speciesId: number; weight: number; quality: number; locationId: number; score: number; special: boolean; unlocked: number[]; counted: boolean };
 
@@ -482,6 +592,7 @@ export function outcomeOf(receipt: TransactionReceipt, me: Address): ReelOutcome
     else if (l.eventName === 'WeekScore') counted = true;
     else if (l.eventName === 'Missed') out = { kind: 'missed' };
     else if (l.eventName === 'CastExpired') out = { kind: 'expired' };
+    else if (l.eventName === 'Escaped') out = { kind: 'escaped', speciesId: l.args.speciesId, locationId: l.args.locationId };
     else if (l.eventName === 'BottleFound') out = { kind: 'bottle', amount: num(l.args.amount) };
     else if (l.eventName === 'Caught') {
       const a = l.args;
@@ -563,6 +674,20 @@ export async function catalogMismatches(): Promise<string[]> {
   if (bottles) {
     check('BLEND amount', num(await publicClient.readContract({ ...bottles, functionName: 'amount' })), BLEND_PRIZE.amount);
     check('BLEND level', await publicClient.readContract({ ...bottles, functionName: 'minLevel' }), BLEND_PRIZE.minLevel);
+  }
+  // the reel fight: the page plays the fight the judge will replay, so the two must set it the same way
+  if ((await lensRelease()) >= 5) {
+    check('blocks for a fight', await publicClient.readContract({ ...lens, functionName: 'fightBlocks' }), FIGHT_BLOCKS);
+    const judge = await publicClient.readContract({ ...lens, functionName: 'reelJudge' });
+    if (judge !== zero) {
+      const j = { address: judge, abi: reelJudgeAbi } as const;
+      const tiers = await publicClient.readContract({ ...j, functionName: 'tiers' });
+      LOCATIONS.forEach((loc, i) => check(`${loc.name} fight tier`, (tiers >> BigInt(i * 4)) & 15n, loc.tier));
+      for (const rodCatch of [-8n, 0n, 6n, 40n]) {
+        const [, , green] = await publicClient.readContract({ ...j, functionName: 'fightOf', args: [1n, 0n, 0n, rodCatch] });
+        check(`green band at rod catch ${rodCatch}`, green, greenOf(Number(rodCatch)));
+      }
+    }
   }
   return out;
 }

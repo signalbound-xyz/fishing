@@ -9,3 +9,4 @@ export { tournamentsAbi } from '../generated/Tournaments';
 export { bottlePoolAbi } from '../generated/BottlePool';
 export { dailyRewardsAbi } from '../generated/DailyRewards';
 export { seasonHuntAbi } from '../generated/SeasonHunt';
+export { reelJudgeAbi } from '../generated/ReelJudge';

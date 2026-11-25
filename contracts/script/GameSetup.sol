@@ -9,6 +9,7 @@ import {Marketplace} from "../src/Marketplace.sol";
 import {GameLens} from "../src/GameLens.sol";
 import {Tournaments} from "../src/Tournaments.sol";
 import {FightVerifier, IFightVerifier} from "../src/FightVerifier.sol";
+import {ReelJudge} from "../src/ReelJudge.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
@@ -44,6 +45,17 @@ library GameSetup {
     uint16 internal constant PHANTOM = 1 << 7;
     uint16 internal constant MOVING = RIVER | RAPIDS;
     uint16 internal constant DEEP = LAKE | SEA | PHANTOM;
+
+    /// @notice How rough each water is, four bits per location id (ReelJudge.tiers): pond 0, river 0, lake 1,
+    ///         sea 2, rapids 2, golden lake 1, swamp 2, phantom waters 2. The web client's `tier` of a location
+    ///         (web/src/game/content.ts); it is added to a fish's rarity to get the difficulty of its fight.
+    uint256 internal constant LOCATION_TIERS = 0x22122100;
+
+    /// @notice The judge of the reel fight for this catalog (src/ReelJudge.sol). Deploying it changes nothing:
+    ///         the game asks it only once it is attached (FishingGame.setReelJudge, with no cast in the water).
+    function deployJudge(IFightVerifier verifier, FishNFT fish) internal returns (ReelJudge) {
+        return new ReelJudge(verifier, fish, LOCATION_TIERS);
+    }
 
     function defaultConfig() internal pure returns (FishingGame.Config memory) {
         return FishingGame.Config({

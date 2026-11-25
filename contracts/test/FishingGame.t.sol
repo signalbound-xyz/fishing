@@ -124,7 +124,7 @@ contract FishingGameTest is BaseTest {
         assertEq(game.currentEnergy(alice), 19);
         vm.prank(alice);
         vm.expectRevert(FishingGame.TooEarly.selector);
-        game.reel();
+        game.reel("");
         vm.prank(alice);
         vm.expectRevert(FishingGame.CastInProgress.selector);
         game.cast(0);
@@ -133,7 +133,7 @@ contract FishingGameTest is BaseTest {
     function test_reelNeedsACast() public {
         vm.expectRevert(FishingGame.NoActiveCast.selector);
         vm.prank(alice);
-        game.reel();
+        game.reel("");
     }
 
     function test_lockedLocationCannotBeFished() public {
@@ -158,13 +158,22 @@ contract FishingGameTest is BaseTest {
         assertEq(game.currentEnergy(alice), 20);
     }
 
-    function test_anyoneCanReelForAPlayer() public {
+    /// @dev Anyone can close a player's cast that holds nothing to fight for. What a stranger can and cannot do
+    ///      with a fish on the line is in test/ReelFight.t.sol.
+    function test_anyoneCanCloseACastWithNothingOnIt() public {
         vm.prank(alice);
         game.cast(0);
         uint64 target = game.castOf(alice).targetBlock;
         vm.roll(target + 1);
-        // find an entropy that lands a fish, then let bob finish the cast
-        vm.setBlockhash(target, keccak256("some block"));
+        bytes32 empty;
+        for (uint256 i;; i++) {
+            empty = keccak256(abi.encode("nothing", i));
+            (, bool landed) = _peek(alice, empty);
+            if (!landed) break;
+        }
+        vm.setBlockhash(target, empty);
+        vm.expectEmit(true, false, false, true);
+        emit FishingGame.Missed(alice, 0);
         vm.prank(bob);
         game.reelFor(alice);
         assertEq(fish.balanceOf(bob), 0);
@@ -178,14 +187,26 @@ contract FishingGameTest is BaseTest {
         vm.expectEmit(true, false, false, false);
         emit FishingGame.CastExpired(alice);
         vm.prank(alice);
-        game.reel();
+        game.reel("");
         assertEq(fish.balanceOf(alice), 0);
     }
 
+    /// @dev A finished cast with nothing to fight for is closed by the next cast. One with a fish on the line is
+    ///      not (test/ReelFight.t.sol).
     function test_newCastResolvesTheFinishedOne() public {
         vm.prank(alice);
         game.cast(0);
-        vm.roll(block.number + 3);
+        uint64 target = game.castOf(alice).targetBlock;
+        vm.roll(target + 1);
+        bytes32 empty;
+        for (uint256 i;; i++) {
+            empty = keccak256(abi.encode("nothing", i));
+            (, bool landed) = _peek(alice, empty);
+            if (!landed) break;
+        }
+        vm.setBlockhash(target, empty);
+        vm.expectEmit(true, false, false, true);
+        emit FishingGame.Missed(alice, 0);
         vm.prank(alice);
         game.cast(0);
         assertEq(game.playerOf(alice).casts, 2);
@@ -224,13 +245,12 @@ contract FishingGameTest is BaseTest {
         uint64 target = game.castOf(alice).targetBlock;
         vm.roll(target + 1);
         vm.setBlockhash(target, keccak256("once"));
-        vm.prank(alice);
-        game.reel();
+        _reelIn(alice);
         uint256 fishAfter = fish.nextId();
         uint256 xpAfter = game.playerOf(alice).xp;
         vm.prank(alice);
         vm.expectRevert(FishingGame.NoActiveCast.selector);
-        game.reel();
+        game.reel("");
         vm.prank(bob);
         vm.expectRevert(FishingGame.NoActiveCast.selector);
         game.reelFor(alice);
@@ -238,19 +258,20 @@ contract FishingGameTest is BaseTest {
         assertEq(game.playerOf(alice).xp, xpAfter, "no second reward");
     }
 
-    /// @dev The outcome is a function of the committed block only: who settles, and when, changes nothing.
-    function testFuzz_outcomeDoesNotDependOnWhoSettlesOrWhen(bytes32 entropy, uint8 delay) public {
+    /// @dev The outcome is a function of the committed block only: when the player settles, inside the time the
+    ///      fight is given, changes nothing.
+    function testFuzz_outcomeDoesNotDependOnWhenItIsSettled(bytes32 entropy, uint8 delay) public {
         uint256 snap = vm.snapshotState();
-        (uint16 spA, uint32 wA, uint8 qA, uint256 blendA) = _settle(entropy, 1, alice);
+        (uint16 spA, uint32 wA, uint8 qA, uint256 blendA) = _settle(entropy, 1);
         vm.revertToState(snap);
-        (uint16 spB, uint32 wB, uint8 qB, uint256 blendB) = _settle(entropy, 1 + uint256(delay) % 200, bob);
+        (uint16 spB, uint32 wB, uint8 qB, uint256 blendB) = _settle(entropy, 1 + uint256(delay) % 200);
         assertEq(spA, spB);
         assertEq(wA, wB);
         assertEq(qA, qB);
         assertEq(blendA, blendB);
     }
 
-    function _settle(bytes32 entropy, uint256 blocksLater, address settler)
+    function _settle(bytes32 entropy, uint256 blocksLater)
         internal
         returns (uint16 species, uint32 weight, uint8 quality, uint256 blend)
     {
@@ -260,8 +281,7 @@ contract FishingGameTest is BaseTest {
         vm.roll(target + blocksLater);
         vm.setBlockhash(target, entropy);
         uint256 next = fish.nextId();
-        vm.prank(settler);
-        game.reelFor(alice);
+        _reelIn(alice);
         blend = game.blendWon(alice);
         if (fish.nextId() > next) {
             FishNFT.Fish memory f = fish.fish(next);
@@ -270,8 +290,9 @@ contract FishingGameTest is BaseTest {
         }
     }
 
-    /// @dev There is nothing a client can claim: reel takes no arguments, so the only inputs are the committed
-    ///      block and the tackle fixed at cast time. Swapping tackle after the cast must not change the result.
+    /// @dev There is nothing a client can claim about the catch: reel takes the recording of the fight and
+    ///      nothing else, so what the fish is depends on the committed block and the tackle fixed at cast time
+    ///      only. Swapping tackle after the cast must not change the result.
     function test_changingTackleAfterTheCastChangesNothing() public {
         _fund(alice, 150_000 * E);
         vm.prank(alice);
@@ -298,8 +319,7 @@ contract FishingGameTest is BaseTest {
         vm.roll(target + 1);
         vm.setBlockhash(target, keccak256("swap"));
         uint256 next = fish.nextId();
-        vm.prank(alice);
-        game.reel();
+        _reelIn(alice);
         if (fish.nextId() > next) {
             FishNFT.Fish memory f = fish.fish(next);
             return (f.speciesId, f.weight, f.quality, 0);
@@ -321,7 +341,7 @@ contract FishingGameTest is BaseTest {
         uint32 casts = game.lureCasts(alice, 0);
         vm.roll(block.number + 300); // the player sits on the result until it expires
         vm.prank(alice);
-        game.reel();
+        game.reel("");
         FishingGame.Player memory afterIt = game.playerOf(alice);
         assertEq(fish.balanceOf(alice), 0);
         assertEq(afterIt.xp, before.xp);
@@ -337,7 +357,7 @@ contract FishingGameTest is BaseTest {
         uint256 snap = vm.snapshotState();
         vm.setBlockhash(game.castOf(who).targetBlock, entropy);
         uint256 id = fish.nextId();
-        game.reelFor(who);
+        _reelIn(who);
         landed = fish.nextId() > id;
         if (landed) f = fish.fish(id);
         vm.revertToState(snap);
@@ -381,9 +401,9 @@ contract FishingGameTest is BaseTest {
         assertEq(game.currentEnergy(alice), 18, "the second cast was not charged");
     }
 
-    /// @dev The same attacker gets what the block says and nothing better when the outcome is a fish: whoever
-    ///      finishes the cast, the fish is the same one.
-    function test_whoFinishesACastDoesNotChangeTheFish() public {
+    /// @dev When the outcome is a fish the same attacker gets nowhere at all: a fish on the line is the player's
+    ///      to reel in, and the player lands the one the block says.
+    function test_aStrangerCannotFinishACastWithAFishOnIt() public {
         vm.prank(alice);
         game.cast(0);
         uint64 target = game.castOf(alice).targetBlock;
@@ -398,7 +418,10 @@ contract FishingGameTest is BaseTest {
         }
         vm.setBlockhash(target, good);
         uint256 id = fish.nextId();
-        new PickyReeler().reelOrRevert(game, fish, alice);
+        PickyReeler picky = new PickyReeler();
+        vm.expectRevert(FishingGame.FishOn.selector);
+        picky.reelOrRevert(game, fish, alice);
+        _reelIn(alice);
         assertEq(fish.ownerOf(id), alice);
         assertEq(keccak256(abi.encode(fish.fish(id))), keccak256(abi.encode(expected)));
     }
@@ -966,8 +989,11 @@ contract FishingGameTest is BaseTest {
             uint64 target = game.castOf(alice).targetBlock;
             vm.roll(target + 1);
             vm.setBlockhash(target, keccak256(abi.encode("for", ++i)));
+            // a bottle needs no fight, so a stranger can bring it in; a fish he cannot touch
             vm.prank(bob);
-            game.reelFor(alice);
+            try game.reelFor(alice) {} catch {
+                _reelIn(alice);
+            }
         }
         assertEq(blend.balanceOf(alice), BOTTLE);
         assertEq(blend.balanceOf(bob), 0);

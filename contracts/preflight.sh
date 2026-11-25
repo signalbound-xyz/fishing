@@ -15,7 +15,7 @@ step "2/6 storage layout of the current code against the released code"
 step "3/6 OpenZeppelin upgrade validation against the released code"
 ./validate-upgrade.sh
 step "4/6 contract sizes (limit 24,576 bytes)"
-forge build --sizes --skip test --skip script 2>/dev/null | grep -E "^\| (Contract|FishingGame|Tournaments|GameLens|FishNFT|DailyRewards|SeasonHunt|DrandBeacon|BlockhashBeacon) |^\|[-=|]+\|$" || { echo "a contract is over the size limit"; forge build --sizes --skip test --skip script; exit 1; }
+forge build --sizes --skip test --skip script 2>/dev/null | grep -E "^\| (Contract|FishingGame|Tournaments|GameLens|FishNFT|DailyRewards|SeasonHunt|DrandBeacon|BlockhashBeacon|ReelJudge|FightVerifier) |^\|[-=|]+\|$" || { echo "a contract is over the size limit"; forge build --sizes --skip test --skip script; exit 1; }
 step "5/6 tests, the upgrade from the released bytecode among them"
 forge test 2>&1 | grep -E "^Ran [0-9]+ test suites|FAIL|^Suite result: FAILED" || true
 forge test >/dev/null 2>&1 || { echo "tests failed: run forge test"; exit 1; }

@@ -16,6 +16,9 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SeasonHunt} from "../src/SeasonHunt.sol";
 import {DrandBeacon} from "../src/DrandBeacon.sol";
 import {SeasonHuntScript} from "../script/SeasonHunt.s.sol";
+import {IFightVerifier} from "../src/FightVerifier.sol";
+import {ReelJudge} from "../src/ReelJudge.sol";
+import {ReelJudgeScript} from "../script/ReelJudge.s.sol";
 
 /// @notice The rehearsal of an upgrade on the real thing: a fork of a live network. The proxies there are pointed at
 ///         the current source, and every player the chain knows, every fish and every tournament must read exactly
@@ -267,7 +270,7 @@ contract UpgradeForkTest is GameStateReader {
         vm.roll(target + 1);
         vm.setBlockhash(target, keccak256("fork"));
         vm.prank(angler);
-        game.reel();
+        game.reel("");
         assertEq(game.totalCasts(), casts + 1);
         assertEq(_castOf(game, angler).targetBlock, 0);
         assertEq(game.playerOf(angler).casts, 1);
@@ -278,6 +281,68 @@ contract UpgradeForkTest is GameStateReader {
             if (block.number <= pending) vm.roll(pending + 1);
             game.reelFor(players[i]);
             assertEq(_castOf(game, players[i]).targetBlock, 0);
+        }
+    }
+
+    /// @dev The reel fight on the real state: the game upgraded by the real script, the judge deployed by its
+    ///      script on top of the fight verifier the network already runs, and attached as the owner would. Nothing
+    ///      the chain knows moves by attaching it. Then a newcomer loses a fish by not fighting, and lands one by
+    ///      fighting, with the live verifier replaying the recording.
+    function test_reelFightsOnTheForkAfterTheUpgrade() public onFork {
+        _upgrade();
+        assertEq(lens.reelJudge(), address(0), "the upgrade attached a judge by itself");
+        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/../deployments/", vm.toString(block.chainid), ".json"));
+        IFightVerifier verifier = IFightVerifier(vm.parseJsonAddress(json, ".fightVerifier"));
+        assertEq(address(verifier), address(cup.verifier()), "the deployments file names another fight verifier than the tournaments use");
+        ReelJudgeScript script = new ReelJudgeScript();
+        ReelJudge judge = script.build(game, verifier);
+
+        bytes32[] memory before = new bytes32[](players.length);
+        for (uint256 i; i < players.length; i++) before[i] = _playerState(players[i]);
+        bytes32 world = _worldState();
+        assertEq(game.castsInWater(), 0);
+        vm.prank(game.owner());
+        game.setReelJudge(judge);
+        assertEq(lens.reelJudge(), address(judge));
+        for (uint256 i; i < players.length; i++) {
+            assertEq(_playerState(players[i]), before[i], string.concat("attaching the judge changed ", vm.toString(players[i])));
+        }
+        assertEq(_worldState(), world, "attaching the judge changed fish, tournaments or the catalog");
+
+        address angler = makeAddr("fork fighter");
+        uint256 next = fish.nextId();
+        // a fish on the line, not fought: gone
+        uint64 target = _hookOnFork(angler, judge);
+        vm.expectRevert(FishingGame.FishOn.selector);
+        game.reelFor(angler);
+        vm.prank(angler);
+        game.reel("");
+        assertEq(fish.nextId(), next, "a fish was minted for a fight nobody played");
+        assertEq(game.playerOf(angler).xp, 0);
+        assertEq(game.playerOf(angler).catches, 0);
+        assertEq(_castOf(game, angler).targetBlock, 0);
+        // a fish on the line, fought: landed
+        target = _hookOnFork(angler, judge);
+        _landWith(game, judge, angler);
+        assertEq(fish.ownerOf(next), angler);
+        assertEq(game.playerOf(angler).catches, 1);
+        assertGt(target, 0);
+    }
+
+    /// @dev `who` casts on the fork and the cast's block gets a hash under which a fish bites.
+    function _hookOnFork(address who, ReelJudge judge) internal returns (uint64 target) {
+        vm.prank(who);
+        game.cast(0);
+        target = _castOf(game, who).targetBlock;
+        vm.roll(target + 1);
+        uint256 next = fish.nextId();
+        for (uint256 i;; i++) {
+            vm.setBlockhash(target, keccak256(abi.encode("fork bite", who, target, i)));
+            uint256 snap = vm.snapshotState();
+            _landWith(game, judge, who);
+            bool bites = fish.nextId() > next;
+            vm.revertToState(snap);
+            if (bites) return target;
         }
     }
 
@@ -318,7 +383,7 @@ contract UpgradeForkTest is GameStateReader {
             vm.roll(target + 1);
             vm.setBlockhash(target, keccak256(abi.encode("fork", i)));
             vm.prank(angler);
-            game.reel();
+            game.reel("");
         }
         assertEq(game.currentEnergy(angler), 16);
         _claim(rewards, key, angler, day);
@@ -445,7 +510,7 @@ contract UpgradeForkTest is GameStateReader {
         vm.roll(target + 1);
         vm.setBlockhash(target, keccak256("fork hunt"));
         vm.prank(lucky);
-        game.reel();
+        game.reel("");
         assertEq(_castOf(game, lucky).targetBlock, 0);
 
         // not final inside the window; after it the prize and the trophy

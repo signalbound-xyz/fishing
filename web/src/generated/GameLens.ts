@@ -494,6 +494,19 @@ export const gameLensAbi = [
   },
   {
     "type": "function",
+    "name": "fightBlocks",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "fishNft",
     "inputs": [],
     "outputs": [
@@ -800,6 +813,11 @@ export const gameLensAbi = [
                 "name": "counted",
                 "type": "bool",
                 "internalType": "bool"
+              },
+              {
+                "name": "fight",
+                "type": "bool",
+                "internalType": "bool"
               }
             ]
           },
@@ -902,6 +920,19 @@ export const gameLensAbi = [
             "internalType": "bool"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "reelJudge",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"

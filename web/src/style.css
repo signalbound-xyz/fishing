@@ -2912,6 +2912,93 @@ div.item {
   }
 }
 
+/* ------------------------------------------------------------ the one-try fight (pond) */
+/* it advances in 50 ms ticks: ease the needle and the fish between them */
+.reel.ticks .gauge-needle,
+.reel.ticks .haul-fish,
+.reel.ticks .haul-taut {
+  transition: left 50ms linear, width 50ms linear;
+}
+/* the rule, on screen through the whole fight */
+.reel-rule {
+  color: var(--text-2);
+  line-height: 1.35;
+}
+.reel-rule b {
+  color: var(--accent-hi);
+}
+/* the red warns; its striped end is where the line snaps */
+.gauge-seg.red:has(.gauge-snap) {
+  display: flex;
+  align-items: stretch;
+  background: linear-gradient(90deg, #7a2f28, #a5352b);
+}
+.gauge-seg.red:has(.gauge-snap) > span:first-child {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.gauge-snap {
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0 3px 0 5px;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: repeating-linear-gradient(135deg, #c8372b 0 4px, #5a1712 4px 8px);
+  box-shadow: inset 2px 0 0 var(--bg-deep);
+  text-shadow: 1px 1px 0 #2a0b08;
+}
+/* said under the cast button, before anything is in the water */
+.cast-rule {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--dim);
+}
+/* lost: the gauge jolts, the line parts or goes limp, the fish is off */
+.reel.lost .gauge {
+  box-shadow: 0 0 0 2px var(--danger-hi);
+  animation: reel-jolt 0.24s steps(4, jump-none) 2;
+}
+.reel.lost .haul {
+  overflow: hidden;
+}
+.reel.lost .haul-fish {
+  left: 118% !important;
+  opacity: 0;
+  transition: left 0.8s steps(8, jump-none), opacity 0.8s steps(4, jump-none);
+}
+.reel.lost.snapped .haul-taut {
+  width: 22% !important;
+  background: repeating-linear-gradient(90deg, var(--danger-hi) 0 4px, transparent 4px 8px);
+  transition: none;
+}
+.reel.lost.slack .haul-taut {
+  background: var(--dim);
+  opacity: 0.5;
+}
+.reel.lost .reel-hold {
+  opacity: 0.5;
+}
+@keyframes reel-jolt {
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reel.lost .gauge {
+    animation: none;
+  }
+  .reel.lost .haul-fish {
+    transition: none;
+  }
+}
+
 /* ------------------------------------------------------------ cup (tournaments) */
 .cup-list {
   display: flex;

@@ -5,10 +5,12 @@ import {BaseTest} from "./Base.t.sol";
 import {FishNFT} from "../src/FishNFT.sol";
 import {FishingGame} from "../src/FishingGame.sol";
 import {GameSetup} from "../script/GameSetup.sol";
+import {FightBot} from "./FightBot.sol";
 
 /// @notice Writes real cast outcomes, with everything that went into them, to a JSON file. The web client
 ///         predicts a cast's outcome from the same inputs (web/src/game/chainOutcome.ts) and its tests replay
 ///         these vectors, so the prediction cannot drift from the contract unnoticed.
+///         A caught fish comes with its reel fight (difficulty, green band, seed) and a recording that lands it.
 ///         Regenerate after changing `_reel`: WRITE_VECTORS=true forge test --match-contract VectorsTest
 contract VectorsTest is BaseTest {
     string internal constant PATH = "../web/src/game/fixtures/outcomes.json";
@@ -29,9 +31,14 @@ contract VectorsTest is BaseTest {
         for (uint8 r = 1; r < 6; r++) game.buyRod(r);
         vm.stopPrank();
 
-        string memory out = "[";
+        // one vector a line, written as it is made, and its memory given back: 240 fights do not fit otherwise
+        vm.writeFile(PATH, "[\n");
         uint256 n = 240;
         for (uint256 i; i < n; i++) {
+            uint256 free;
+            assembly ("memory-safe") {
+                free := mload(0x40)
+            }
             if (i == n / 2) {
                 // second half: bottles are common and the pool is full, so that branch is covered too; one a day,
                 // so the daily limit also closes it now and then ("the roll says bottle, but none is open")
@@ -50,9 +57,12 @@ contract VectorsTest is BaseTest {
                 bottles.withdraw(owner, blend.balanceOf(address(bottles)));
                 vm.stopPrank();
             }
-            out = string.concat(out, i == 0 ? "" : ",", _vector(i));
+            vm.writeLine(PATH, string.concat(i == 0 ? "" : ",", _vector(i)));
+            assembly ("memory-safe") {
+                mstore(0x40, free)
+            }
         }
-        vm.writeFile(PATH, string.concat(out, "]\n"));
+        vm.writeLine(PATH, "]");
     }
 
     function _vector(uint256 i) internal returns (string memory) {
@@ -77,8 +87,7 @@ contract VectorsTest is BaseTest {
         vm.setBlockhash(c.targetBlock, entropy);
         uint256 nextFish = fish.nextId();
         uint256 blendBefore = game.blendWon(alice);
-        vm.prank(alice);
-        game.reel();
+        _reelIn(alice);
 
         string memory result;
         if (fish.nextId() > nextFish) {
@@ -87,6 +96,7 @@ contract VectorsTest is BaseTest {
                 '"kind":"caught","speciesId":', vm.toString(f.speciesId), ',"weight":', vm.toString(f.weight),
                 ',"quality":', vm.toString(f.quality)
             );
+            result = string.concat(result, _fightOf(c, entropy, f.speciesId));
             // sell so the keepnet does not grow without bound (does not change later outcomes)
             uint256[] memory ids = new uint256[](1);
             ids[0] = nextFish;
@@ -98,6 +108,23 @@ contract VectorsTest is BaseTest {
             result = '"kind":"missed"';
         }
         return string.concat("{", inputs, ',"expected":{', result, "}}");
+    }
+
+    /// @dev The fight this fish had to be landed in, as the judge sets it, and a recording that lands it (the one
+    ///      the game has just accepted). The client works the same fight out from the cast and must agree, and
+    ///      its own replay of the recording must end the same way after as many ticks.
+    function _fightOf(FishingGame.Cast memory c, bytes32 entropy, uint16 speciesId) internal view returns (string memory) {
+        uint256 seed = uint256(keccak256(abi.encode(entropy, alice, c.nonce, address(game))));
+        (int256 rodCatch,,,,) = game.loadout(c.rod, c.lure, c.special, c.locationId);
+        (uint256 fightSeed, uint256 difficulty, uint256 green) = reelJudge.fightOf(seed, speciesId, c.locationId, rodCatch);
+        (bytes memory landing, bool landed) = FightBot.play(fightVerifier, fightSeed, difficulty, green);
+        (bool replayed, uint256 ticks,) = fightVerifier.replay(fightSeed, difficulty, green, landing);
+        require(landed && replayed, "a vector's fight was not landed");
+        require(reelJudge.landed(seed, speciesId, c.locationId, rodCatch, landing), "the judge disagrees");
+        return string.concat(
+            ',"fight":{"seed":"', vm.toString(bytes32(fightSeed)), '","difficulty":', vm.toString(difficulty), ',"green":',
+            vm.toString(green), ',"ticks":', vm.toString(ticks), ',"landing":"', vm.toString(landing), '"}'
+        );
     }
 
     function _inputs(FishingGame.Cast memory c, FishingGame.Player memory p, bytes32 entropy)

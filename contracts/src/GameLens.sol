@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {FishNFT} from "./FishNFT.sol";
-import {FishingGame} from "./FishingGame.sol";
+import {FishingGame, FIGHT_BLOCKS} from "./FishingGame.sol";
 
 /// @title Read-only helper: batches the game's views so a client needs a handful of calls, not hundreds.
 /// @notice Holds no state and no permissions. It can be redeployed at any time.
@@ -26,6 +26,7 @@ contract GameLens {
     uint256 internal constant WEEK_TOTAL_SLOT = 23; // mapping(uint256 => mapping(address => uint32)) weekTotal
     uint256 internal constant WEEK_PLAYERS_SLOT = 24; // mapping(uint256 => address[]) _weekPlayers
     uint256 internal constant TROPHY_SLOT = 29; // mapping(uint256 => bool) isTrophy
+    uint256 internal constant REEL_JUDGE_SLOT = 30; // IReelJudge reelJudge
 
     /// @dev Everything a client needs about one player, in one call.
     struct PlayerView {
@@ -253,6 +254,17 @@ contract GameLens {
     /// @notice Whether a fish is a season's trophy: the game does not buy those (`FishingGame.sellFish`).
     function isTrophy(uint256 fishId) public view returns (bool) {
         return _word(_slot(fishId, TROPHY_SLOT)) != 0;
+    }
+
+    /// @notice The judge of the reel fight (src/ReelJudge.sol). Zero: none is attached, and a cast made now gives
+    ///         its fish without a fight.
+    function reelJudge() public view returns (address) {
+        return address(uint160(_word(REEL_JUDGE_SLOT)));
+    }
+
+    /// @notice Blocks after a cast's randomness block in which its fish can be reeled in.
+    function fightBlocks() external pure returns (uint256) {
+        return FIGHT_BLOCKS;
     }
 
     function _record(uint256 w) internal pure returns (FishingGame.Record memory) {

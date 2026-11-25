@@ -464,7 +464,7 @@ The procedure above. For the first upgrade to 004, step 3 is the drain alone (re
 is not needed (the new game starts with casting open). Step 8 is: the live page cannot read the game until the
 new client is out.
 
-## Release 005 (in the source, not deployed): trophies are not sold, four more views in the lens
+## Release 005 (in the source, not deployed): trophies are not sold, four more views in the lens, the reel fight
 
 **Nothing of this is on a network.** It is what `main` holds beyond release 004, and it goes out by the procedure
 above, with the owner's go-ahead.
@@ -483,10 +483,12 @@ error TrophyNotForSale();
   It can still be kept, listed on the market, transferred or shown. 52 bytes.
 - **Room.** The two public getters `dryCatches` and `weekTotal` and the two functions `weekPlayerCount` and
   `weekPlayer` were used by the lens and the tests only. They are read through `extsload` now (`dryCatches` slot
-  16, `weekTotal` 23, `_weekPlayers` 24, `isTrophy` 29), as release 004 did for five others. The game is 23,587
-  bytes with 989 free, where 004 has 721: paid location unlocks (838 bytes) fit again.
-- **Layout.** `check-layout.sh`: ok against release 004, 1 state variable appended. `validate-upgrade.sh` passes.
-  A mapping takes one slot of its own and writes nothing at the upgrade.
+  16, `weekTotal` 23, `_weekPlayers` 24, `isTrophy` 29), as release 004 did for five others. With these two changes
+  alone the game was 23,587 bytes with 989 free, where 004 has 721. The reel fight below takes 577 of them: the
+  release is 24,164 bytes with 412 free.
+- **Layout.** `check-layout.sh`: ok against release 004, 2 state variables and 1 struct field appended (`isTrophy`,
+  and `reelJudge` and `Cast.fight` of the reel fight below). `validate-upgrade.sh` passes. A mapping takes one slot
+  of its own and writes nothing at the upgrade.
 - **The lens.** As in 004, the released lens stops working at the upgrade (it calls the four views that are gone)
   and the new lens does not work before it: the script ships the lens with the game and the client follows at
   once. `test/GameLens.t.sol` compares the four reads and `isTrophy` with the compiler's own getters on the same
@@ -501,6 +503,148 @@ error TrophyNotForSale();
 `SeasonHunt` with tickets is a separate, plain contract and no part of this release: SEASON_HUNT.md, "What is in
 the source and not on the chain".
 
+### The reel fight: a lost fight loses the fish
+
+Up to release 004 the contract gives the catch to whoever settles the cast: the fight is played in the browser and
+decides nothing. Release 005 can make it decide whether there is a fish at all. **The upgrade alone changes nothing
+for players**: the rule is switched on by a second, separate transaction that attaches a judge.
+
+```solidity
+uint256 constant FIGHT_BLOCKS = 600;            // how long a hooked fish is its player's alone
+struct Cast { …; bool counted; bool fight; }    // one field appended; the struct still fits its slot
+IReelJudge internal reelJudge;                  // appended after isTrophy: slot 30 (GameLens.reelJudge reads it)
+function setReelJudge(IReelJudge judge) external onlyOwner;   // only over still water
+function reel(bytes calldata recording) external;             // was reel()
+function reelFor(address player) external;                    // unchanged signature
+error FishOn();
+event Escaped(address indexed player, uint8 locationId, uint16 speciesId);
+```
+
+`ReelJudge` (`src/ReelJudge.sol`, 1,404 bytes, a plain contract with no owner and no storage) says which fight a
+cast gets and asks the `FightVerifier` the tournaments already use (2,018 bytes, on Fluent Testnet since the
+tournaments were deployed) to replay the recording:
+
+- the fight's seed is `keccak256(castSeed)`: fixed by the cast, the same for every try;
+- its difficulty is the fish's rarity plus the water's tier (calm 0, choppy 1, rough 2), at most 5;
+- its green band is 25% of the gauge plus 0.75 points per point of the rod's catch, between 15% and 37.5%: the
+  band the page has always shown for that rod in that water (`test_everyRodGivesTheBandItPromises`).
+
+The recording is one bit per 50 ms tick ("is the player reeling"), at most 1,200 ticks. The line snaps when the
+tension reaches the end of the gauge; the fish swims away when the line stays slack; the red zone short of the end
+only reels more slowly. A recording that ends before the fish is at the pier has not landed it.
+
+**Every way a cast can end, with a judge attached** (`test/ReelFight.t.sol`):
+
+| The cast holds | Who settles, when | Result |
+|---|---|---|
+| a fish | the player, `reel(recording)`, within 600 blocks of the cast's block, the recording lands it | the catch: fish minted, XP, collection, records, as before |
+| a fish | the player, `reel(recording)`, within 600 blocks, any other recording (empty, cut short, snapped, slack, random) | `Escaped`. The cast is closed. No fish, no XP, no collection entry, no record, no pity counter, no weekly score. Energy, rod wear and the lure use were spent at the cast and stay spent |
+| a fish | anyone else (`reelFor`), or the player's own next `cast` / the hunt's `castFor`, within 600 blocks | reverts `FishOn`: nothing changes. Nobody can end somebody else's fight, and a new cast does not throw the fish away or land it |
+| a fish | anyone, by any path, after 600 blocks | `Escaped`: the fish is gone whatever recording comes with it, and the cast is closed |
+| a fish | after the reel window (8,191 blocks) | `CastExpired`, as before: the cast is cleared, nothing is landed |
+| nothing, or a bottle | anyone, at once, by any path | as before (`Missed`, or the bottle is paid): there is nothing to fight for |
+| a fish, cast made while no judge was attached | anyone, any recording | the catch, as before: a cast keeps the rule it was made under |
+
+There is no second try: the cast is deleted by the first settlement, landed or lost, and a second `reel` reverts
+`NoActiveCast` (`test_thereIsNoSecondTryAtTheSameFish`). `testFuzz_aFishIsMintedExactlyWhenTheRecordingLandsIt`
+and `testFuzz_onlyThePlayersOwnLandingInTimeMintsTheFish` fuzz the recording, the sender, the path and the block.
+A judge that does not answer (no code at its address, a revert, an answer of the wrong size) reverts the whole
+call: no fish is minted on a missing answer, and none is lost either
+(`test_aJudgeThatDoesNotAnswerLandsNothing`).
+
+**Why 600 blocks.** About ten minutes on Fluent: three missed hooks, a wallet confirmation and a fight of at most
+60 seconds take a fraction of that, and a drain before a change of rules never waits longer than that for a fish
+on somebody's line. It is a constant of the game, not of the judge.
+
+**What the check proves, and what it does not.** It proves that the settlement carried a recording that lands the
+fish, in time, sent by the player's own address. It does not prove that a person played it, nor that it was the
+first try: the seed is public once the cast's block exists, so a program can compute a landing recording
+(`test/FightBot.sol` is one, in Solidity), and a player with a modified page can retry the fight off the chain and
+send the best recording. The page plays the fight once and remembers that it did
+(`web/src/play/fightLog.ts`); that is a rule the page keeps, not one the chain can enforce. So: **a failed fight
+that reaches the chain is final, and no path mints a fish without a landing recording; an honest player on the
+official page loses the fish; a bot does not.** Stopping bots is a different problem (proof of a person, or a
+fight the client cannot precompute) and is not part of this release. How fast the hook was set cannot be checked
+either, so a missed hook stays what it was: the fish bites again.
+
+**Casts made before the upgrade.** A cast in the water at the upgrade has `fight == false` (the bit did not exist)
+and is settled as before, by anyone, with any recording. No judge is attached by the upgrade, so casts made after
+it are settled as before too. `setReelJudge` refuses while a cast is in the water (`WaterNotStill`), so no cast
+changes its rule in flight: `test_reelFightsOnTopOfTheReleasedState` (the upgrade from the latest release, with
+its casts) and `test_reelFightsOnTheForkAfterTheUpgrade` (the live game on a fork, with the live verifier). A cast
+from before release 004 that the count never saw is the one case `_stillWater` cannot see; it carries no fight bit
+and keeps the old rule (`test_aLegacyCastTheCountNeverSawKeepsTheOldRule`), and none exists on Fluent Testnet
+after the drained upgrade to 004 unless one is older than that drain.
+
+**The ABI changes.** `reel()` becomes `reel(bytes)`: another selector. A page built before the upgrade cannot
+settle on the new game, and the new page built in this release reads the release the game runs
+(`web/src/game/release.ts`) and sends whichever the game understands. `castOf` returns one more word; the released
+`SeasonHunt` decodes the six it knows and the fork test plays a season on the live hunt after the upgrade.
+
+**Gas.** The replay is about 430 gas per tick: some 95,000 for a typical fight and 520,000 for a full minute, on
+top of the landing itself. `test_gasOfLandingAFishAfterALongFight` holds a landing with a 1,200-tick recording
+under 1,500,000.
+
+**The keeper** (`web/KEEPER.md`): `reelFor` on a fish that is still its player's is refused before anything is
+sent, and reported as a fight, not a failure. A drain therefore waits up to 600 blocks for fish on the line.
+
+**Procedure: two steps, each with the owner's go-ahead.**
+
+1. *Client first.* Publish the page of this release. It plays the old flow on release 004 and needs nothing from
+   the chain.
+2. *The game.* The procedure above, steps 1–8 (pause, drain, upgrade with the new lens, record, resume, sync the
+   client). After it the game is release 005 with no judge: nothing a player can notice, except that trophies are
+   no longer bought.
+3. *The judge.* Deploy it; nothing asks it yet:
+
+   ```bash
+   forge script script/ReelJudge.s.sol --sig "deploy()" --rpc-url fluent_testnet --broadcast --private-key <key>
+   ```
+
+   Commit `deployments/`, sync and publish the client (`pnpm sync`), so that the page checks the judge it will
+   meet (`catalogMismatches`: the tiers, the bands, the 600 blocks).
+4. *Switch on.* Pause, drain, attach, resume. `attach()` checks the judge against the game first (the fish
+   contract, the tiers, the verifier, an empty recording that lands nothing) and refuses with a cast in the water
+   or with casting open:
+
+   ```bash
+   forge script script/Water.s.sol --sig "pause()" --rpc-url fluent_testnet --broadcast --private-key <owner key>
+   ```
+
+   ```bash
+   cd ../web && pnpm keeper --drain
+   ```
+
+   ```bash
+   cd ../contracts && forge script script/ReelJudge.s.sol --sig "attach()" --rpc-url fluent_testnet --broadcast --private-key <owner key>
+   ```
+
+   ```bash
+   forge script script/Water.s.sol --sig "resume()" --rpc-url fluent_testnet --broadcast --private-key <owner key>
+   ```
+
+   A page that was open since before step 1 does not know fights. Its fish would be lost by the clock, not landed:
+   it calls a `reel()` that no longer exists. Publishing the client well before step 4 is what keeps that to
+   nobody.
+5. *Switch off*, if the judge or the page misbehaves: pause, drain (up to 600 blocks), then
+
+   ```bash
+   forge script script/ReelJudge.s.sol --sig "detach()" --rpc-url fluent_testnet --broadcast --private-key <owner key>
+   ```
+
+   From the next cast on any bite is a catch again. This is the rollback of the rule; it needs no upgrade. It is
+   also a power of the owner's one key over the rule (see "Remaining risks").
+
+Another fight (softer rough water, a lower cap: `web/REEL_BALANCE.md`, section 9) is another judge: deploy it with
+other `tiers`, give the client the same numbers, and repeat step 4. The game is not upgraded for it.
+
+**Balance.** `web/REEL_BALANCE.md` (`pnpm sim:reel`) has what the rule does to landing rates, PEARL, XP and the
+time to open waters and buy tackle for three model players, and what is recommended. No economic parameter is
+changed by this release.
+
+**Season Hunt** does not ask for a fight: a hit is decided by its draw alone. Tying the trophy and the prize to a
+fight needs a new hunt contract: SEASON_HUNT.md, "The reel fight and the hunt".
+
 ## Contract size
 
 **Fluent enforces EIP-170.** Checked on Fluent Testnet by simulating a contract creation (`eth_estimateGas`, no
@@ -513,18 +657,19 @@ transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `Cre
 | release 002, on Fluent Testnet on 24 November 2026: the above plus the daily reward hook | 23,688 | 888 |
 | release 003, on Fluent Testnet until 25 November 2026: the above plus the Season Hunt hook | 24,293 | 283 |
 | release 004, on Fluent Testnet now: still water and the long window (565 bytes), five views moved to the lens | 23,855 | 721 |
-| release 005, in the source and not deployed: trophies are not sold (52 bytes), four more views moved to the lens | 23,587 | 989 |
+| release 005, in the source and not deployed: trophies are not sold (52 bytes), four more views moved to the lens, the reel fight (577 bytes) | 24,164 | 412 |
 
 `DailyRewards`, the plain contract that goes with the daily reward hook, is 3,802 bytes; `SeasonHunt` is 15,455 as
 deployed and 19,362 in the source, with tickets; `DrandBeacon` is 4,158. See "The daily reward" and "Season Hunt"
 above.
 
-**721 bytes are left on the chain, 989 in the source.** `GameLens`, a plain contract, is 13,951 bytes
-in release 004. The Season Hunt hook was first written to land the trophy through the game's own
+**721 bytes are left on the chain, 412 in the source.** `GameLens`, a plain contract, is 13,951 bytes
+in release 004 and 14,144 in the source; `ReelJudge` is 1,404 and `FightVerifier` 2,018. The Season Hunt hook was first written to land the trophy through the game's own
 catch code (dex, XP, the `Caught` event): 2,078 bytes, which did not fit. What is in the source mints the fish and
 nothing else. The next feature that needs code in `FishingGame` needs one of the options under "What 1,236 bytes
 buy" first. Release 004 took the first part of option A to make room for itself and left 721; release 005 takes
-four more views and leaves 989, so paid location unlocks (838 bytes) fit again, with 151 to spare.
+four more views, which left 989, and spends 577 of them on the reel fight: 412 are left, so paid location
+unlocks (838 bytes) do not fit without moving `playerOf` or `castOf` out as well (option A).
 
 ### What was optimized
 
@@ -656,6 +801,15 @@ network with real value needs the owner to be a multisig behind a timelock befor
   and leaves three things to the procedure: the species table and the bottle rules (other contracts), the code
   behind the proxy, and casts made before the upgrade to 004 ("Still water"). A running tournament reads the
   game's catalog live in every release.
+- **The reel fight proves a landing recording, not a person** (release 005, "The reel fight"). A script lands
+  every fish; a modified page can retry a fight off the chain; only a lost fight that is sent, or a fish whose 600
+  blocks ran out, is lost for good. With a judge attached, honest players earn less than scripts
+  (`web/REEL_BALANCE.md`).
+- **The judge is the owner's switch.** `setReelJudge` is one transaction of the one key below, over still water:
+  it can turn fights off (every bite a catch again), or attach a judge that lands nothing (every fish lost) or
+  everything. It cannot touch a fish already minted or a cast already in the water.
+- **A stale page loses fish once fights are on.** A page loaded before the client of this release cannot settle
+  on release 005 at all (`reel()` is gone); with a judge attached its fish run out after 600 blocks.
 - **The pause is the owner's.** `setCastingPaused` stops every new cast with one transaction of the one key
   below. It cannot take or hold anything a player has: reeling in and selling go on.
 - **The long window trusts the chain's block-hash history** to have every hash ("8,191 blocks to land a cast").

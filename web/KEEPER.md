@@ -7,7 +7,7 @@ until the operator gives it both ("Switching it on").
 | | What is lost without it | What the keeper sends |
 |---|---|---|
 | Season Hunt | A seasonal cast that hooked the season's fish counts only once `SeasonHunt.settle` has recorded it, within the season's settle window (an hour in season 0, six hours in the season files since). The player's page does that; a closed tab does not. | `settle(season, attempt, proof)` for every attempt that hit and can still take the catch |
-| Ordinary casts | A cast is landed by `reel` for as long as the game can read the hash of its randomness block: 8,191 blocks on Fluent from release 004, 256 before it. After that the fish is gone. | `reelFor(player)` for every cast with fewer than `KEEPER_RESCUE_BLOCKS` left |
+| Ordinary casts | A cast is landed by `reel` for as long as the game can read the hash of its randomness block: 8,191 blocks on Fluent from release 004, 256 before it. After that the fish is gone. With a reel judge attached (release 005) the keeper cannot save a fish at all: see "Fish on the line". | `reelFor(player)` for every cast with fewer than `KEEPER_RESCUE_BLOCKS` left |
 | Still water | Rules that decide a catch may only change while no cast is in the water (`contracts/UPGRADES.md`, "Still water"). | with `--drain`: `reelFor` for every cast in the water |
 
 Code: `src/server/keeper.ts` (the logic, no I/O of its own), `keeperChain.ts` (the chain and the drand relays),
@@ -53,6 +53,21 @@ does it. Two passes at once on one instance are refused (409).
 ones. `pnpm keeper --drain` repeats the pass until the game's own count, `castsInWater`, is zero. An expired
 cast is reeled in too (it lands nothing, and leaves the count). `--from <block>` looks further back than one
 reel window, for casts older than that.
+
+**Fish on the line** (release 005 with a reel judge attached; `contracts/UPGRADES.md`, "The reel fight"). A fish
+that bit has to be reeled in by its own player, with a recording of the fight, within 600 blocks of the cast.
+Until then `reelFor` is refused (`FishOn`); after that anyone closes the cast and the fish is gone. For the keeper:
+
+- It never lands a fish for a player any more, and it cannot lose one for them either. What it still rescues near
+  the end of the reel window are casts that hold a bottle; a cast with a fish in it is by then long lost (600
+  blocks against 8,191), and reeling it in only clears it.
+- In a drain, `reelFor` on a fish that is still its player's is refused when the gas is estimated, so nothing is
+  sent. The pass counts it under `casts.fighting` (and `left`), not under `failed`, and says in its notes how
+  many there are. `pnpm keeper --drain` waits for them, a quarter of a minute at a time: a drain can take up to
+  600 blocks, about ten minutes on Fluent. A cast with nothing or a bottle on it is reeled in at once, as before:
+  the keeper does not need to know which is which, the game says.
+- The keeper holds no recording and computes none. A keeper that worked out landing recordings for the players
+  would be the bot the rule is honest about not stopping; this one does not do it.
 
 ## The endpoint
 
@@ -161,10 +176,11 @@ It runs the same `api/keeper.js` and reads the same environment.
 
 ## Tests and rehearsals
 
-- `src/server/keeper.test.ts`, 42 tests against a fake chain: hits recorded lowest first, an earlier hit taking a
+- `src/server/keeper.test.ts`, 45 tests against a fake chain: hits recorded lowest first, an earlier hit taking a
   recorded catch over, attempts whose round does not exist yet, late ones, a disagreement with the contract, a
   hit recorded by someone else between the read and the send, casts rescued and drained, expired and uncounted
-  casts, the time budget, the clock against the beacon's margin (on time, half the margin, the margin, a clock
+  casts, fish on the line (left to their players, cleared when their time is up, never a failure), the time
+  budget, the clock against the beacon's margin (on time, half the margin, the margin, a clock
   ahead, a hunt on block hashes), the endpoint's refusals, the configuration.
 - `src/game/release.test.ts`: the release is told from a real answer of the testnet's game, and the reel window
   is the long one only for a release that asks the history.
@@ -200,3 +216,8 @@ It runs the same `api/keeper.js` and reads the same environment.
   than twenty seconds of its settle window left is counted as late and not sent: the transaction would not be
   mined in time.
 - **Tournament casts** are not the game's casts and the keeper does not reel them.
+- **A closed tab loses the fish once fights are on.** Up to release 004 the keeper lands a cast its player left
+  in the water. Under the reel judge nobody but the player can, and only for 600 blocks.
+- **`live:reel` on a local chain, 25 November 2026:** with a fish on the line the keeper's `reelFor` came back as
+  a fight, its drain reported `fighting: 1` and no failure, and its account's nonce did not move (nothing was
+  sent). Not exercised against a live network: no judge is attached on any.
