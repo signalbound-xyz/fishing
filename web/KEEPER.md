@@ -42,8 +42,9 @@ lowest attempt first, and an attempt later than the recorded catch is skipped: i
 **Casts.** The pass reads `Casted` events of the last reel window (5,000 blocks per query), asks the game which of
 those casts are still in the water, and reels in the ones with fewer than `KEEPER_RESCUE_BLOCKS` blocks left. The
 window is asked of the chain: 8,191 where the game is release 004 or later and the block-hash history contract
-(EIP-2935) answers, 256 otherwise. On release 003, which Fluent Testnet runs today, it is 256 although the
-history is there: that game does not ask it. The keeper notices the upgrade by itself.
+(EIP-2935) answers, 256 otherwise. Fluent Testnet runs release 004 since 25 November 2026, so there it is 8,191.
+On a release 003 game it is 256 even where the history is there: that game does not ask it. The keeper tells the
+release by itself.
 
 **Out of time.** A pass stops sending when `KEEPER_BUDGET_MS` is used up and reports what it left; the next pass
 does it. Two passes at once on one instance are refused (409).

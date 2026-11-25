@@ -137,7 +137,7 @@ refund and no other seed.
 | Who can bias it | the block producer | the block producer |
 | Inputs fixed at the request | the whole fight as a snapshot, the rules contract, the verifier's code hash | water, rod, lure, special bonus; the catalog and config are read at the reel, and from release 004 cannot change while a cast is in the water |
 | Sub-draws | one tagged hash per draw | slices of one 256-bit seed |
-| Left unfinished | an operator's settler finishes or expires it every minute | the player's client; anyone may call `reelFor`; the operator's keeper (built, not yet running) |
+| Left unfinished | an operator's settler finishes or expires it every minute | the player's client; anyone may call `reelFor`; the operator's keeper (built, not yet running: it has no key) |
 | Time to finish | 256 blocks | 256 blocks; 8,191 from release 004 |
 
 - **The entropy is the same in strength.** Fluent's block producer fills `PREVRANDAO` with fresh random bytes for
@@ -152,7 +152,7 @@ refund and no other seed.
   by less than 0.03 percentage points. Not worth a change that would alter every recorded test vector.
 - **Taken:** the adversarial tests above, which potion-game has and this game lacked, and this account of where
   the guarantees end.
-- **Taken since, in release 004 and beside it** (built and rehearsed; the upgrade and the keeper's key are the
+- **Taken since, in release 004 and beside it** (release 004 is on Fluent Testnet since 25 November 2026; the keeper's key is the
   operator's to switch on):
   - *An operator's settler.* The keeper records Season Hunt hits for the players and reels in casts about to
     expire ([web/KEEPER.md](web/KEEPER.md)). Like potion-game's, it sends only what anyone may send and decides

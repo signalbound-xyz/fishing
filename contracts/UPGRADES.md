@@ -164,7 +164,7 @@ It prints the proxy, the old and new implementation, the code size and hash, and
    forge script script/Water.s.sol --sig "status()" --rpc-url fluent_testnet
    ```
 
-   It must say `still`. Release 003, the code on Fluent Testnet now, has neither the pause nor the count, so for
+   It must say `still`. Release 003 has neither the pause nor the count, so for
    the upgrade *to* 004 this step is `pnpm keeper --drain` alone, at a quiet moment: a cast made between the
    drain and the upgrade is landed by the new code under the same rules (004 changes none), and it is not in the
    new count ("Casts from before the count"). A tournament reads the game's catalog for as long as it runs: wait
@@ -357,7 +357,9 @@ SEASON_HUNT.md, "Deployment", has them in order. `SeasonHunt` and the beacons ha
 
 ## Release 004: still water, a longer window, views in the lens
 
-**Built and rehearsed; not deployed.** Three changes to `FishingGame`, and the room for them.
+**On Fluent Testnet since 25 November 2026** (block 43,608,509): implementation
+`0x0B92488eF38bA2F73Bc91aef02c94C2456fcE433`, `GameLens` `0x024068D28141EFc9e6cb926c897aC430a78218a7`. There was no
+cast in the water at the upgrade. Three changes to `FishingGame`, and the room for them.
 
 ```solidity
 uint64 public castsInWater;      // appended after seasonHunt, in its slot
@@ -470,8 +472,8 @@ transaction): a runtime of 24,576 bytes is accepted, 24,577 is refused with `Cre
 | release 001, on Fluent Testnet until 24 November 2026 | 24,336 | 240 |
 | after the optimizations below (never deployed by itself) | 23,340 | 1,236 |
 | release 002, on Fluent Testnet on 24 November 2026: the above plus the daily reward hook | 23,688 | 888 |
-| release 003, on Fluent Testnet now: the above plus the Season Hunt hook | 24,293 | 283 |
-| release 004, not deployed: still water and the long window (565 bytes), five views moved to the lens | 23,855 | 721 |
+| release 003, on Fluent Testnet until 25 November 2026: the above plus the Season Hunt hook | 24,293 | 283 |
+| release 004, on Fluent Testnet now: still water and the long window (565 bytes), five views moved to the lens | 23,855 | 721 |
 
 `DailyRewards`, the plain contract that goes with the daily reward hook, is 3,802 bytes; `SeasonHunt` is 15,455 and
 `DrandBeacon` 4,158. See "The daily reward" and "Season Hunt" above.
@@ -608,8 +610,8 @@ network with real value needs the owner to be a multisig behind a timelock befor
 
 ## Remaining risks
 
-- **Rules in flight.** On release 003, the code on the chain, a cast in the water reads the live config and
-  catalog, and keeping rules steady is a rule of the procedure. Release 004 enforces it for the game's own rules
+- **Rules in flight.** Until release 003 a cast in the water read the live config and
+  catalog, and keeping rules steady was a rule of the procedure. Release 004, the code on the chain, enforces it for the game's own rules
   and leaves three things to the procedure: the species table and the bottle rules (other contracts), the code
   behind the proxy, and casts made before the upgrade to 004 ("Still water"). A running tournament reads the
   game's catalog live in every release.
