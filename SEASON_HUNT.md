@@ -657,7 +657,7 @@ details.
 |---|---|---|---|
 | The game does not buy a trophy | `FishingGame` (`isTrophy`, `TrophyNotForSale`), `GameLens.isTrophy` | **done**: release 005, 25 November 2026 | — |
 | Four views moved from the game to the lens | `FishingGame`, `GameLens` | **done**: release 005 | — |
-| The reel fight in ordinary fishing: a lost fight loses the fish (412 bytes left free in the game) | `FishingGame` (`reel(bytes)`, `setReelJudge`), `ReelJudge` | release 005 with no judge: every bite is a catch | a judge deployed and attached (`contracts/UPGRADES.md`, "The reel fight", steps 3 and 4) |
+| The reel fight in ordinary fishing: a lost fight loses the fish (412 bytes left free in the game) | `FishingGame` (`reel(bytes)`, `setReelJudge`), `ReelJudge` | **done**: `ReelJudge` `0x34F8D1a3…` deployed and attached on 26 November 2026 | — (`detach()` takes it off again: `contracts/UPGRADES.md`, "The reel fight", step 5) |
 | A fight for the season's fish | nowhere: a design only ("The reel fight and the hunt" above) | a hit is decided by its draw alone | a new hunt contract, its client and keeper, between weeks |
 | Season tickets | `SeasonHunt` (`createTicketed`, `buyTicket`, `tickets`) | the first hunt, `0xb09eA27c…`, has none | deploy a new hunt and beacon (`deploy()`), then `attach()` it in place of the old one |
 | Six hours to record a hit | the season files | season 0 was created with one hour and keeps it | nothing: it applies to seasons created from now on, on either hunt |

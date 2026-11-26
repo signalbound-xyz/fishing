@@ -21,10 +21,10 @@ could be forged). The client works the pending outcome out as soon as its block 
 (`src/game/chainOutcome.ts`, checked against vectors produced by the contract), plays a real bite, hook and fight
 on it, and settles afterwards. What a lost fight costs there depends on the game the network runs:
 
-- **Up to release 004**, and on release 005 with no reel judge attached (Fluent Testnet today): a lost fight is a
+- **Up to release 004**, and on release 005 with no reel judge attached: a lost fight is a
   retry, each easier, and the third is hauled in. The fight is the floating-point one in `src/game/minigame.ts`
   and decides nothing.
-- **Release 005 with a reel judge attached**: one fight per fish, in the integer machine the contract replays
+- **Release 005 with a reel judge attached** (Fluent Testnet since 26 November 2026): one fight per fish, in the integer machine the contract replays
   (`src/game/fight.ts`, the twin of `contracts/src/FightVerifier.sol`). The page records it and sends the
   recording with the settlement; a lost fight is sent too and the fish is gone, with nothing given for it. The
   page shows the rule before the cast, counts down before the fight starts, and plays no fish twice: the fight of
@@ -129,7 +129,7 @@ nothing in the browser decides a catch, a balance or an unlock; the only client-
 | `pnpm sim:reel` | compares the contracts before and after the reel judge (a lost fight is a retry / a lost fish) for three model players, writes `REEL_BALANCE.md` (about a minute) |
 | `pnpm sim:week` | works out and plays the three hunts of the repository's week file for the same crowds, writes the weekly tables in `SEASON_HUNT_BALANCE.md` |
 | `pnpm keeper` | the operator's keeper from a terminal: `--dry-run` looks and sends nothing, `--watch` repeats, `--drain` reels in every cast in the water ([KEEPER.md](KEEPER.md)) |
-| `pnpm live:read` | asks the live network, reading only: the block-hash history the long reel window relies on, the deployed lens in the shape this build decodes, the keeper's dry run |
+| `pnpm live:read` | asks the live network, reading only: the block-hash history the long reel window relies on, the deployed lens in the shape this build decodes, the deployed reel judge against the page's own fight (which fight a cast gets, what 240 recordings come to, the gas of the longest replay), the keeper's dry run |
 | `pnpm live:reel` | the reel fight end to end on a local chain (anvil): the page's own code against a fresh deployment; see "The reel fight end to end" below |
 | `pnpm live` | the tournament rehearsal on a live network; sends transactions with the deployer's key (see the header of `live/cup.live.ts`) |
 
@@ -283,8 +283,15 @@ nothing and report a fight), a new cast over the fish, a second recording for th
 **What it does not cover:** the page itself in a browser against a game with a judge. Sign-in is Fluent Connect,
 which has no wallet on a local chain, so the strict flow of `play/ui/pond.ts` (the countdown, the one fight, the
 settlement of a lost fight, coming back after a reload) has been driven in the browser in local mode only, where
-it shares the fight code and the screens but not the transactions. It needs a pass by hand on Fluent Testnet once
-a judge is attached there.
+it shares the fight code and the screens but not the transactions. A judge is attached on Fluent Testnet since
+26 November 2026; a pass by hand there, signed in, is still owed.
+
+**The same test against the live game.** On 26 November 2026, before the judge was attached, the switch was
+rehearsed on a local fork of Fluent Testnet (`anvil --fork-url … --chain-id 31337 --auto-impersonate`, the
+network's deployments file copied to `deployments/31337.json`): pause, `attach()` and resume as the owner, then
+this test with a new player. It passed: three fish landed, one line snapped, one empty recording, one late one.
+A fork runs the contracts on anvil's EVM, not on Fluent's own execution; `pnpm live:read` covers that side for the
+judge (below).
 
 ## Balance lab
 

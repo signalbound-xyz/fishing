@@ -220,4 +220,6 @@ It runs the same `api/keeper.js` and reads the same environment.
   in the water. Under the reel judge nobody but the player can, and only for 600 blocks.
 - **`live:reel` on a local chain, 25 November 2026:** with a fish on the line the keeper's `reelFor` came back as
   a fight, its drain reported `fighting: 1` and no failure, and its account's nonce did not move (nothing was
-  sent). Not exercised against a live network: no judge is attached on any.
+  sent). The same on 26 November 2026 against a local fork of Fluent Testnet with the deployed judge attached to
+  the live game. Not yet seen on the live network itself: nobody has left a fish on the line there since the
+  judge was attached that day.

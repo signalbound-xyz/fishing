@@ -464,13 +464,19 @@ The procedure above. For the first upgrade to 004, step 3 is the drain alone (re
 is not needed (the new game starts with casting open). Step 8 is: the live page cannot read the game until the
 new client is out.
 
-## Release 005: trophies are not sold, four more views in the lens, the reel fight (built in, not switched on)
+## Release 005: trophies are not sold, four more views in the lens, the reel fight
 
 **On Fluent Testnet since 25 November 2026** (block 43,648,056): implementation
 `0x3B05f556F41431876e1A438B998567fc3D88B235`, built from commit `5311263`, `GameLens`
 `0x59f903d02d74b6eCA175d0B7002E21111595E183`. Casting was paused and no cast was in the water at the upgrade; it
-was resumed right after. **No reel judge is deployed or attached**: any bite is a catch, as before. Attaching one
-is a separate step with its own go-ahead ("The reel fight", steps 3 and 4).
+was resumed right after. For a day no reel judge was attached and any bite was a catch, as before.
+
+**The reel fight counts since 26 November 2026** (block 43,688,253): `ReelJudge`
+`0x34F8D1a3372abb06F119daf8f6eca35590a2b12F` (deployed in block 43,687,889 on top of the fight verifier
+`0xFbF0C76B0A7ae5299237A1539De208ad38Ba193a`) was attached with the owner's go-ahead. Casting was paused for 28
+blocks (43,688,233 to 43,688,261) and no cast was in the water. From the next cast on a fish that bites is minted
+only for a recording of the fight that lands it ("The reel fight", steps 3 and 4). `forge script
+script/ReelJudge.s.sol --sig "status()" --rpc-url fluent_testnet` says what is attached now.
 
 ```solidity
 mapping(uint256 => bool) internal isTrophy;  // appended after castingPaused: slot 29
@@ -593,22 +599,26 @@ under 1,500,000.
 **The keeper** (`web/KEEPER.md`): `reelFor` on a fish that is still its player's is refused before anything is
 sent, and reported as a fight, not a failure. A drain therefore waits up to 600 blocks for fish on the line.
 
-**Procedure: two steps, each with the owner's go-ahead.**
+**Procedure: the client first, then the chain, each step with the owner's go-ahead.**
 
 1. *Client first.* Publish the page of this release. It plays the old flow on release 004 and needs nothing from
    the chain. **Done on 25 November 2026.**
 2. *The game.* The procedure above, steps 1–8 (pause, drain, upgrade with the new lens, record, resume, sync the
    client). After it the game is release 005 with no judge: nothing a player can notice, except that trophies are
    no longer bought. **Done on 25 November 2026** (see the top of this section).
-3. *The judge.* **Not done; needs the owner's go-ahead.** Deploy it; nothing asks it yet:
+3. *The judge.* **Done on 26 November 2026** (`0x34F8D1a3372abb06F119daf8f6eca35590a2b12F`). Deploy it; nothing asks it yet:
 
    ```bash
    forge script script/ReelJudge.s.sol --sig "deploy()" --rpc-url fluent_testnet --broadcast --private-key <key>
    ```
 
-   Commit `deployments/`, sync and publish the client (`pnpm sync`), so that the page checks the judge it will
-   meet (`catalogMismatches`: the tiers, the bands, the 600 blocks).
-4. *Switch on.* **Not done; needs the owner's go-ahead.** Pause, drain, attach, resume. `attach()` checks the judge against the game first (the fish
+   Commit `deployments/`. The page finds the judge through the lens (`reelJudge()`), not through the deployments
+   file, and checks the one it meets (`catalogMismatches`: the tiers, the bands, the 600 blocks), so the client
+   needs no new build for it. Before step 4, `cd ../web && pnpm live:read` puts the deployed judge and the page's
+   own fight side by side on the network itself: on 26 November 2026, 48 fights and 240 recordings agreed, and the
+   longest replay (310 ticks) cost 326,758 gas as a call of its own.
+4. *Switch on.* **Done on 26 November 2026**, after a rehearsal on a local fork of the network (`web/README.md`,
+   "The reel fight end to end"). Pause, drain, attach, resume. `attach()` checks the judge against the game first (the fish
    contract, the tiers, the verifier, an empty recording that lands nothing) and refuses with a cast in the water
    or with casting open:
 

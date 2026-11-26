@@ -5,9 +5,9 @@ contract, when the only client is a browser the player controls.
 
 Two answers are in the code. Up to release 004 skill changes time and nothing else. Release 005, on Fluent
 Testnet since 25 November 2026, lets the fight decide whether the fish is landed at all, once its owner attaches a
-reel judge ("The reel fight" below). No judge is attached there yet, so the testnet still plays by the first
-answer. Both are described; where they differ the text says
-which.
+reel judge ("The reel fight" below). One is attached there since 26 November 2026, so the testnet plays by the
+second answer; a cast made before that, or on a game with no judge, plays by the first. Both are described; where
+they differ the text says which.
 
 ## The lifecycle
 
