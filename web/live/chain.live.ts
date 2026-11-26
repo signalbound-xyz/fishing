@@ -7,6 +7,10 @@
  *     of most of them: a slot that was skipped would still hold the hash of a block 8,191 blocks earlier.
  *   - The page reads the game through the lens, in the shape of the release the network runs (game/release.ts).
  *     The lens ships with the game's release: this is the check to run before and right after an upgrade.
+ *   - A fish on the line is landed by a recording of its fight, which the page plays on its own copy of the fight
+ *     (game/fight.ts) and the deployed judge replays (ReelJudge, FightVerifier). The two must agree on which fight
+ *     a cast gets and on what every recording comes to, on this network's own execution, or players lose fish
+ *     they landed. Checked for the judge in the deployments file, attached or not.
  *   - The keeper decides off the chain which seasonal casts hooked the season's fish (game/hunt.ts). Whatever the
  *     live hunt holds right now is put to the contract's own `outcome` as well.
  *
@@ -16,7 +20,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, encodeFunctionData, http, pad, toHex, type Hex } from 'viem';
 import { describe, expect, it } from 'vitest';
-import { gameLensAbi } from '../src/abi';
+import { gameLensAbi, reelJudgeAbi } from '../src/abi';
+import { castFight } from '../src/game/chainOutcome';
+import { LOCATIONS } from '../src/game/content';
+import { MAX_TICKS, botInputs, packInputs, replayFight } from '../src/game/fight';
 import { huntHit } from '../src/game/hunt';
 import { CAST_OF_SELECTOR, decodePlayerView, releaseOf, type GameRelease } from '../src/game/release';
 import { runKeeper } from '../src/server/keeper';
@@ -106,6 +113,53 @@ describe('the deployed lens', () => {
     if (lensRelease < 5) expect(view.cast.fight).toBe(false);
     console.log(`[live] the game is release ${release === 3 ? '003 or earlier' : release === 4 ? '004' : '005 or later'}, its lens ${dep.lens} is built for ${lensRelease}: ${catalog.locations.length} water(s), ${catalog.species.length} species`);
   });
+});
+
+describe.skipIf(!dep.reelJudge)('the deployed reel judge', () => {
+  const judge = { address: dep.reelJudge, abi: reelJudgeAbi } as const;
+  const lens = { address: dep.lens, abi: gameLensAbi } as const;
+
+  it('gives a cast the fight the page plays, and makes of a recording what the page makes of it', async () => {
+    const catalog = await pub.readContract({ ...lens, functionName: 'catalog' });
+    const attached = await pub.readContract({ ...lens, functionName: 'reelJudge' });
+    const rods = [-8, 0, 6, 12, 40];
+    let fights = 0;
+    let recordings = 0;
+    let landedOnes = 0;
+    let longest = { ticks: 0, gas: 0n };
+    // every water with a fish of every rarity it can be asked about, under rods from the worst to past the cap
+    const cases = LOCATIONS.flatMap((loc, locationId) =>
+      [0, 5, 11, 17, 23, catalog.species.length - 1].map((speciesId, k) => ({ loc, locationId, speciesId, rodCatch: rods[(locationId + k) % rods.length], seed: BigInt(locationId * 1_000 + k * 37 + 1) })),
+    );
+    for (const c of cases) {
+      const mine = castFight(c.seed, catalog.species[c.speciesId].rarity, c.loc.tier, c.rodCatch);
+      const [seed, difficulty, green] = await pub.readContract({ ...judge, functionName: 'fightOf', args: [c.seed, BigInt(c.speciesId), BigInt(c.locationId), BigInt(c.rodCatch)] });
+      expect({ seed, difficulty: Number(difficulty), green: Number(green) }, `the fight of species ${c.speciesId} at ${c.loc.name}, rod catch ${c.rodCatch}`).toEqual(mine);
+      fights++;
+
+      // a recording that lands it (when the stand-in player manages), the same cut short, the same with every
+      // tick turned over, an untouched reel, and a reel held from the first tick to the last
+      const played = botInputs(mine.seed, mine.difficulty, mine.green);
+      const tries = [played, played.slice(0, played.length >> 1), played.map((b) => !b), [], Array.from({ length: MAX_TICKS }, () => true)];
+      for (const bits of tries) {
+        const inputs = packInputs(bits);
+        const page = replayFight(mine.seed, mine.difficulty, mine.green, inputs);
+        const args = [c.seed, BigInt(c.speciesId), BigInt(c.locationId), BigInt(c.rodCatch), inputs] as const;
+        const chain = await pub.readContract({ ...judge, functionName: 'landed', args });
+        expect(chain, `species ${c.speciesId} at ${c.loc.name}, rod catch ${c.rodCatch}, a recording of ${bits.length} tick(s)`).toBe(page.landed);
+        recordings++;
+        if (chain) landedOnes++;
+        if (page.ticks > longest.ticks) longest = { ticks: page.ticks, gas: await pub.estimateContractGas({ ...judge, functionName: 'landed', args }) };
+      }
+    }
+    expect(landedOnes).toBeGreaterThan(cases.length / 4); // the comparison saw fish landed, not only fish lost
+    // the longest fight here is replayed well inside what a transaction may spend
+    expect(longest.gas).toBeLessThan(2_000_000n);
+    console.log(
+      `[live] the reel judge ${dep.reelJudge} (${attached === dep.reelJudge ? 'attached' : attached === '0x0000000000000000000000000000000000000000' ? 'not attached' : `NOT the one the game asks: ${attached}`}): ` +
+        `${fights} fight(s) and ${recordings} recording(s) agree with the page, ${landedOnes} landed; the longest replay, ${longest.ticks} tick(s), costs ${longest.gas} gas as a call of its own`,
+    );
+  }, 180_000);
 });
 
 describe('the keeper on the live network', () => {
